@@ -54,6 +54,7 @@ open class ZygoteNextLocalProbe {
         var minimumMountId = 0L
         var maximumMountId = 0L
         var mountCount = 0
+        val mountIdsByPoint = linkedMapOf<String, Long>()
         val markers = mutableListOf<ZygoteNextMountMarker>()
         lines.forEach { line ->
             val parsed = parseLine(line) ?: return@forEach
@@ -67,6 +68,9 @@ open class ZygoteNextLocalProbe {
                 rootPropagation = parsed.optionalFields
                     .filter { it.startsWith("shared:") || it.startsWith("master:") }
                     .joinToString(" ")
+            }
+            if (parsed.mountPoint in ANCHOR_MOUNT_POINTS) {
+                mountIdsByPoint[parsed.mountPoint] = parsed.mountId
             }
             val labels = markerLabels(line)
             if (labels.isNotEmpty()) {
@@ -91,6 +95,7 @@ open class ZygoteNextLocalProbe {
             minimumMountId = minimumMountId,
             maximumMountId = maximumMountId,
             mountCount = mountCount,
+            mountIdsByPoint = mountIdsByPoint,
             markers = markers,
         )
     }
@@ -181,5 +186,15 @@ open class ZygoteNextLocalProbe {
     companion object {
         private const val MOUNTINFO_PATH = "/proc/self/mountinfo"
         private const val NAMESPACE_PATH = "/proc/self/ns/mnt"
+        private val ANCHOR_MOUNT_POINTS = setOf(
+            "/",
+            "/dev",
+            "/proc",
+            "/sys",
+            "/data",
+            "/system",
+            "/vendor",
+            "/product",
+        )
     }
 }

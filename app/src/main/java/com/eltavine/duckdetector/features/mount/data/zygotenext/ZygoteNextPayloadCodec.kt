@@ -21,6 +21,7 @@ object ZygoteNextPayloadCodec {
     fun decode(payload: String): ZygoteNextProcessSnapshot {
         val values = linkedMapOf<String, String>()
         val markers = mutableListOf<ZygoteNextMountMarker>()
+        val anchorMountIds = linkedMapOf<String, Long>()
         payload.lineSequence().filter(String::isNotBlank).forEach { line ->
             val separator = line.indexOf('=')
             require(separator > 0) { "Malformed zygote_next payload line." }
@@ -28,6 +29,18 @@ object ZygoteNextPayloadCodec {
             val value = line.substring(separator + 1)
             if (key == KEY_MARKER) {
                 markers += decodeMarker(value)
+            } else if (key == KEY_ANCHOR) {
+                val fields = value.split('\t')
+                require(fields.size == ANCHOR_FIELD_COUNT) { "Malformed zygote_next anchor record." }
+                val point = decodeEscaped(fields[0])
+                val mountId = fields[1].toLongOrNull()
+                    ?: throw IllegalArgumentException("Invalid zygote_next anchor mount ID.")
+                require(point.isNotEmpty() && mountId > 0L) {
+                    "Incomplete zygote_next anchor record."
+                }
+                require(anchorMountIds.put(point, mountId) == null) {
+                    "Duplicate zygote_next anchor: $point."
+                }
             } else {
                 require(values.put(key, decodeEscaped(value)) == null) {
                     "Duplicate $key in zygote_next payload."
@@ -75,6 +88,7 @@ object ZygoteNextPayloadCodec {
             minimumMountId = minimumMountId,
             maximumMountId = maximumMountId,
             mountCount = mountCount,
+            mountIdsByPoint = anchorMountIds,
             markers = markers,
             errorDetail = error,
         )
@@ -145,8 +159,9 @@ object ZygoteNextPayloadCodec {
             ?: throw IllegalArgumentException("Missing or invalid $key in zygote_next payload.")
     }
 
-    private const val PAYLOAD_VERSION = "2"
+    private const val PAYLOAD_VERSION = "3"
     private const val MARKER_FIELD_COUNT = 6
+    private const val ANCHOR_FIELD_COUNT = 2
     private const val KEY_VERSION = "VERSION"
     private const val KEY_AVAILABLE = "AVAILABLE"
     private const val KEY_PID = "PID"
@@ -160,5 +175,6 @@ object ZygoteNextPayloadCodec {
     private const val KEY_MOUNTINFO_READABLE = "MOUNTINFO_READABLE"
     private const val KEY_MOUNT_COUNT = "MOUNT_COUNT"
     private const val KEY_MARKER = "MARKER"
+    private const val KEY_ANCHOR = "ANCHOR"
     private const val KEY_ERROR = "ERROR"
 }

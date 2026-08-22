@@ -84,7 +84,7 @@ class MountRepository(
                 .copy(zygoteNext = zygoteNext)
         }
 
-        val findings = buildFindings(snapshot, preloadResult, shellTmpResult)
+        val findings = buildFindings(snapshot, preloadResult, shellTmpResult, zygoteNext)
         val impacts = buildImpacts(snapshot, findings)
         val methods = buildMethods(snapshot, preloadResult, shellTmpResult, zygoteNext)
 
@@ -175,6 +175,7 @@ class MountRepository(
         snapshot: MountNativeSnapshot,
         preloadResult: EarlyMountPreloadResult,
         shellTmpResult: ShellTmpConcealmentProbeResult,
+        zygoteNext: MountZygoteNextReport,
     ): List<MountFinding> {
         val mapped = snapshot.findings.mapIndexed { index, finding ->
             MountFinding(
@@ -231,7 +232,44 @@ class MountRepository(
             }
         }
 
-        val runtimeAndInformational = mapped + informational
+        val zygoteNamespaceFindings = when (zygoteNext.namespaceAssessment) {
+            com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY,
+            com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.INCONSISTENT -> listOf(
+                MountFinding(
+                    id = "zygote_next_namespace_anomaly",
+                    label = "Zygote next namespace anomaly",
+                    value = zygoteNext.namespaceAssessment.name,
+                    group = MountFindingGroup.CONSISTENCY,
+                    severity = MountFindingSeverity.WARNING,
+                    detail = zygoteNext.namespaceAssessmentDetail,
+                ),
+            )
+
+            else -> emptyList()
+        }
+
+        val zygoteExposureFindings = if (zygoteNext.exposure ==
+            com.eltavine.duckdetector.features.mount.domain.MountZygoteNextExposure.ROOT_MOUNT_EXPOSURE
+        ) {
+            listOf(
+                MountFinding(
+                    id = "zygote_next_root_mount_exposure",
+                    label = "Root mount exposure",
+                    value = "ROOT_MOUNT_EXPOSURE",
+                    group = MountFindingGroup.RUNTIME,
+                    severity = MountFindingSeverity.DANGER,
+                    detail = zygoteNext.dangerousMarkers.joinToString("\n") { marker ->
+                        "${marker.labels.joinToString("+")}: ${marker.mountPoint} " +
+                            "[${marker.fileSystemType}; root=${marker.mountRoot}; source=${marker.source}]"
+                    },
+                    detailMonospace = true,
+                ),
+            )
+        } else {
+            emptyList()
+        }
+
+        val runtimeAndInformational = mapped + informational + zygoteNamespaceFindings + zygoteExposureFindings
         val withShellTmp = runtimeAndInformational + shellTmpResult.findings
         val preloadFindings = buildPreloadFindings(preloadResult)
         val merged = mergePreloadFindings(
@@ -367,9 +405,11 @@ class MountRepository(
                     MountZygoteNextState.UNSUPPORTED -> "Requires Android 17"
                     MountZygoteNextState.UNAVAILABLE -> "Unavailable"
                     MountZygoteNextState.READY -> when {
-                        zygoteNext.leakDetected ->
-                            "${zygoteNext.dangerousMarkers.size} root mount(s)"
+                        zygoteNext.exposure == com.eltavine.duckdetector.features.mount.domain.MountZygoteNextExposure.ROOT_MOUNT_EXPOSURE ->
+                            "ROOT_MOUNT_EXPOSURE: ${zygoteNext.dangerousMarkers.size} root mount(s)"
 
+                        zygoteNext.namespaceAssessment == com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY -> "Private namespace anomaly"
+                        zygoteNext.namespaceAssessment == com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.INCONSISTENT -> "Evidence inconsistent"
                         !zygoteNext.hasInitNamespaceCoverage -> "Coverage unverified"
                         else -> "Clean"
                     }
@@ -381,6 +421,8 @@ class MountRepository(
 
                     MountZygoteNextState.READY -> when {
                         zygoteNext.leakDetected -> MountMethodOutcome.DANGER
+                        zygoteNext.namespaceAssessment == com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY ||
+                            zygoteNext.namespaceAssessment == com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment.INCONSISTENT -> MountMethodOutcome.WARNING
                         !zygoteNext.hasInitNamespaceCoverage -> MountMethodOutcome.SUPPORT
                         else -> MountMethodOutcome.CLEAN
                     }
@@ -503,18 +545,23 @@ class MountRepository(
             },
             sdkInt = sdkInt,
             mainNamespaceInode = mainProcess.mountNamespaceInode,
+            mainUid = mainProcess.uid,
             mainPropagation = mainProcess.rootPropagation,
             mainRootMountId = mainProcess.rootMountId,
             mainMinimumMountId = mainProcess.minimumMountId,
             mainMaximumMountId = mainProcess.maximumMountId,
             mainMountCount = mainProcess.mountCount,
+            mainMountIdsByPoint = mainProcess.mountIdsByPoint,
             mainMarkers = mainProcess.markers.map { it.toMountMarker() },
             isolatedNamespaceInode = isolatedProcess.mountNamespaceInode,
+            isolatedParentPid = isolatedProcess.parentPid,
+            isolatedUid = isolatedProcess.uid,
             isolatedPropagation = isolatedProcess.rootPropagation,
             isolatedRootMountId = isolatedProcess.rootMountId,
             isolatedMinimumMountId = isolatedProcess.minimumMountId,
             isolatedMaximumMountId = isolatedProcess.maximumMountId,
             isolatedMountCount = isolatedProcess.mountCount,
+            isolatedMountIdsByPoint = isolatedProcess.mountIdsByPoint,
             isolatedMarkers = isolatedProcess.markers.map { it.toMountMarker() },
             errorDetail = errorDetail,
         )
@@ -541,11 +588,19 @@ class MountRepository(
                 append("Compares the classic app mount view with an Android 17 zygote_next native isolated process. ")
                 append(report.namespaceAssessmentDetail)
                 append(' ')
-                append("main=")
+                append("main={propagation=")
                 append(report.mainPropagation.ifBlank { "unclassified" })
-                append(", isolated=")
+                append(", mounts=${report.mainMountCount}, ids=")
+                append(report.mainMinimumMountId)
+                append("..")
+                append(report.mainMaximumMountId)
+                append("}; isolated={propagation=")
                 append(report.isolatedPropagation.ifBlank { "unclassified" })
-                append(". shared propagation is coverage context only; only root-managed mount records are dangerous.")
+                append(", mounts=${report.isolatedMountCount}, ids=")
+                append(report.isolatedMinimumMountId)
+                append("..")
+                append(report.isolatedMaximumMountId)
+                append("}. Shared propagation plus lower root/minimum and anchor mount IDs is the stock route signature; root-managed mount records are the direct exposure signal.")
             }
         }
     }

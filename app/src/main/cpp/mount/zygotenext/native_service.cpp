@@ -27,6 +27,7 @@
 #include <fstream>
 #include <cstring>
 #include <cstdlib>
+#include <map>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -50,7 +51,6 @@ BinderNew g_binder_new = nullptr;
 ParcelWriteInt32 g_write_int32 = nullptr;
 ParcelWriteString g_write_string = nullptr;
 const AIBinder_Class *g_probe_class = nullptr;
-std::string g_payload;
 
 struct MountRecord {
     uint64_t mount_id = 0;
@@ -204,6 +204,11 @@ std::string join(const std::vector<std::string> &values, const char separator) {
     return output.str();
 }
 
+bool is_anchor_mount_point(const std::string &point) {
+    return point == "/" || point == "/dev" || point == "/proc" || point == "/sys" ||
+           point == "/data" || point == "/system" || point == "/vendor" || point == "/product";
+}
+
 std::string collect_payload() {
     std::ifstream mountinfo("/proc/self/mountinfo");
     std::vector<MarkerRecord> markers;
@@ -213,6 +218,7 @@ std::string collect_payload() {
     uint64_t minimum_mount_id = 0;
     uint64_t maximum_mount_id = 0;
     int mount_count = 0;
+    std::map<std::string, uint64_t> anchor_mount_ids;
     bool readable = mountinfo.good();
     if (readable) {
         std::string line;
@@ -234,6 +240,9 @@ std::string collect_payload() {
                 }
                 root_propagation = join(propagation, ' ');
             }
+            if (is_anchor_mount_point(record.point)) {
+                anchor_mount_ids[record.point] = record.mount_id;
+            }
             auto labels = marker_labels(line);
             if (!labels.empty()) {
                 markers.push_back({std::move(labels), std::move(record), line});
@@ -248,7 +257,7 @@ std::string collect_payload() {
     }
 
     std::ostringstream payload;
-    payload << "VERSION=2\n";
+    payload << "VERSION=3\n";
     payload << "AVAILABLE=" << (readable ? '1' : '0') << '\n';
     payload << "PID=" << getpid() << '\n';
     payload << "PPID=" << getppid() << '\n';
@@ -261,6 +270,9 @@ std::string collect_payload() {
     payload << "MOUNTINFO_READABLE=" << (readable ? '1' : '0') << '\n';
     payload << "MOUNT_COUNT=" << mount_count << '\n';
     payload << "ERROR=" << escape_field(error) << '\n';
+    for (const auto &anchor: anchor_mount_ids) {
+        payload << "ANCHOR=" << escape_field(anchor.first) << '\t' << anchor.second << '\n';
+    }
     for (const auto &marker: markers) {
         payload << "MARKER="
                 << escape_field(join(marker.labels, ',')) << '\t'
@@ -283,9 +295,10 @@ int32_t binder_on_transact(AIBinder *, const uint32_t code, const AParcel *, APa
     if (code != kCollectTransaction || g_write_int32 == nullptr || g_write_string == nullptr) {
         return kStatusUnknownTransaction;
     }
+    const std::string payload = collect_payload();
     if (g_write_int32(output, kStatusOk) != kStatusOk) return -22;
-    const int32_t length = static_cast<int32_t>(g_payload.size());
-    return g_write_string(output, g_payload.c_str(), length) == kStatusOk ? kStatusOk : -22;
+    const int32_t length = static_cast<int32_t>(payload.size());
+    return g_write_string(output, payload.c_str(), length) == kStatusOk ? kStatusOk : -22;
 }
 
 void resolve_binder_api() {
@@ -313,7 +326,6 @@ AIBinder *native_service_on_bind(ANativeService *, uint64_t, const char *, const
 
 extern "C" __attribute__((visibility("default"))) void ANativeService_onCreate(
         ANativeService *service) {
-    g_payload = collect_payload();
     resolve_binder_api();
 
     void *library = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);

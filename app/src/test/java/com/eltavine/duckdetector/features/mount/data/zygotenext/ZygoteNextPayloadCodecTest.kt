@@ -28,7 +28,7 @@ class ZygoteNextPayloadCodecTest {
     fun `versioned payload decodes repeated escaped marker records`() {
         val snapshot = ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
+            VERSION=3
             AVAILABLE=1
             PID=42
             PPID=7
@@ -41,6 +41,9 @@ class ZygoteNextPayloadCodecTest {
             MOUNTINFO_READABLE=1
             MOUNT_COUNT=123
             ERROR=
+            ANCHOR=/\t24
+            ANCHOR=/dev\t25
+            ANCHOR=/proc\t26
             MARKER=KernelSU,data/adb	/data/adb/modules/example	/	ext4	/dev/block/loop7	10 1 7:0 / /data/adb/modules/example rw - ext4 /dev/block/loop7 rw
             MARKER=debug_ramdisk	/debug_ramdisk	/	tmpfs	tmpfs	11 1 0:1 / /debug_ramdisk rw - tmpfs tmpfs rw\ncontext
             """.trimIndent().replace("\\t", "\t"),
@@ -52,6 +55,7 @@ class ZygoteNextPayloadCodecTest {
         assertEquals(24L, snapshot.rootMountId)
         assertEquals(24L, snapshot.minimumMountId)
         assertEquals(131L, snapshot.maximumMountId)
+        assertEquals(mapOf("/" to 24L, "/dev" to 25L, "/proc" to 26L), snapshot.mountIdsByPoint)
         assertEquals(2, snapshot.markers.size)
         assertEquals(listOf("KernelSU", "data/adb"), snapshot.markers[0].labels)
         assertTrue(snapshot.markers[0].dangerous)
@@ -74,7 +78,7 @@ class ZygoteNextPayloadCodecTest {
     fun `malformed marker is rejected`() {
         ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
+            VERSION=3
             AVAILABLE=1
             PID=42
             PPID=7
@@ -92,8 +96,8 @@ class ZygoteNextPayloadCodecTest {
     fun `duplicate scalar field is rejected`() {
         ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
-            VERSION=2
+            VERSION=3
+            VERSION=3
             AVAILABLE=0
             MOUNTINFO_READABLE=0
             """.trimIndent(),
@@ -104,7 +108,7 @@ class ZygoteNextPayloadCodecTest {
     fun `unknown escape is rejected`() {
         ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
+            VERSION=3
             AVAILABLE=0
             MOUNTINFO_READABLE=0
             ERROR=bad\qescape
@@ -116,7 +120,7 @@ class ZygoteNextPayloadCodecTest {
     fun `incomplete ready snapshot is rejected`() {
         ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
+            VERSION=3
             AVAILABLE=1
             PID=42
             PPID=7
@@ -134,7 +138,7 @@ class ZygoteNextPayloadCodecTest {
     fun `root mount id outside reported range is rejected`() {
         ZygoteNextPayloadCodec.decode(
             """
-            VERSION=2
+            VERSION=3
             AVAILABLE=1
             PID=42
             PPID=7

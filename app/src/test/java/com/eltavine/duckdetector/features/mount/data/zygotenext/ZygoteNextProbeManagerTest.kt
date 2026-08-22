@@ -38,6 +38,20 @@ class ZygoteNextProbeManagerTest {
     }
 
     @Test
+    fun `stopped native zygote is unavailable without binding`() = runBlocking {
+        val binding = FakeBinding { error("bind must not be called") }
+
+        val result = manager(
+            binding = binding,
+            availability = ZygoteNextAvailability { false },
+        ).collect()
+
+        assertEquals(ZygoteNextProbeState.UNAVAILABLE, result.state)
+        assertTrue(result.errorDetail.contains("not running"))
+        assertEquals(0, binding.unbindCount)
+    }
+
+    @Test
     fun `null service binder is unavailable`() = runBlocking {
         val binding = FakeBinding { connection ->
             connection.onServiceConnected(null, null)
@@ -99,6 +113,7 @@ class ZygoteNextProbeManagerTest {
 
     private fun manager(
         binding: ZygoteNextServiceBinding,
+        availability: ZygoteNextAvailability = ZygoteNextAvailability { true },
         timeoutMillis: Long = 1_000L,
         payloadCollector: (IBinder) -> String = { error("Payload should not be queried.") },
     ): ZygoteNextProbeManager {
@@ -115,6 +130,7 @@ class ZygoteNextProbeManagerTest {
                 }
             },
             serviceBinding = binding,
+            availability = availability,
             timeoutMillis = timeoutMillis,
             payloadCollector = payloadCollector,
             testOnly = Unit,

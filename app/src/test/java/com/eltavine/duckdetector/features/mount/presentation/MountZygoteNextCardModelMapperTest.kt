@@ -81,7 +81,7 @@ class MountZygoteNextCardModelMapperTest {
 
         assertEquals("Clean", row.value)
         assertEquals(DetectorStatus.allClear(), row.status)
-        assertTrue(row.hiddenCopyText.orEmpty().contains("Namespace assessment: INIT_MANAGED"))
+        assertTrue(row.hiddenCopyText.orEmpty().contains("Namespace assessment: LIKELY_INIT"))
         assertTrue(row.hiddenCopyText.orEmpty().contains("Shared-view contrast: true"))
     }
 
@@ -151,17 +151,22 @@ class MountZygoteNextCardModelMapperTest {
             state = MountZygoteNextState.READY,
             sdkInt = 37,
             mainNamespaceInode = 10,
+            mainUid = 10000,
             mainPropagation = "master:1",
             mainRootMountId = 240,
             mainMinimumMountId = 220,
             mainMaximumMountId = 420,
             mainMountCount = 100,
+            mainMountIdsByPoint = mapOf("/" to 240, "/dev" to 241, "/proc" to 242),
             isolatedNamespaceInode = 20,
+            isolatedParentPid = 2,
+            isolatedUid = 99020,
             isolatedPropagation = "shared:1",
             isolatedRootMountId = 24,
             isolatedMinimumMountId = 20,
             isolatedMaximumMountId = 210,
             isolatedMountCount = 101,
+            isolatedMountIdsByPoint = mapOf("/" to 24, "/dev" to 25, "/proc" to 26),
             isolatedMarkers = markers.toList(),
         )
     }

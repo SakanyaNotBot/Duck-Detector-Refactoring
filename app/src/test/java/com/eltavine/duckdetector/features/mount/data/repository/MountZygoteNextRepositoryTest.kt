@@ -27,6 +27,7 @@ import com.eltavine.duckdetector.features.mount.data.zygotenext.ZygoteNextProces
 import com.eltavine.duckdetector.features.mount.domain.MountMethodOutcome
 import com.eltavine.duckdetector.features.mount.domain.MountStage
 import com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment
+import com.eltavine.duckdetector.features.mount.domain.MountZygoteNextExposure
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -43,6 +44,11 @@ class MountZygoteNextRepositoryTest {
 
         assertEquals(MountStage.READY, report.stage)
         assertTrue(report.zygoteNext.leakDetected)
+        assertEquals(MountZygoteNextExposure.ROOT_MOUNT_EXPOSURE, report.zygoteNext.exposure)
+        assertEquals(
+            "ROOT_MOUNT_EXPOSURE",
+            report.dangerFindings.single { it.id == "zygote_next_root_mount_exposure" }.value,
+        )
         assertEquals(1, report.dangerSignalCount)
         assertEquals(
             MountMethodOutcome.DANGER,
@@ -59,7 +65,7 @@ class MountZygoteNextRepositoryTest {
 
         assertTrue(report.zygoteNext.contrastObserved)
         assertEquals(
-            MountZygoteNextNamespaceAssessment.INIT_MANAGED,
+            MountZygoteNextNamespaceAssessment.LIKELY_INIT,
             report.zygoteNext.namespaceAssessment,
         )
         assertEquals(0, report.dangerSignalCount)
@@ -91,6 +97,42 @@ class MountZygoteNextRepositoryTest {
     }
 
     @Test
+    fun `higher native mount id high-water does not override older root anchors`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                isolatedProcess = base.isolatedProcess.copy(maximumMountId = 421L),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.LIKELY_INIT,
+            report.zygoteNext.namespaceAssessment,
+        )
+        assertEquals(
+            MountMethodOutcome.CLEAN,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
+    }
+
+    @Test
+    fun `short mount tables are unverified`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                mainProcess = base.mainProcess.copy(mountCount = 7),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.UNVERIFIED,
+            report.zygoteNext.namespaceAssessment,
+        )
+    }
+
+    @Test
     fun `shared native root without slave classic root is unverified`() = runBlocking {
         val base = readyResult()
         val report = repository(
@@ -111,7 +153,7 @@ class MountZygoteNextRepositoryTest {
     }
 
     @Test
-    fun `shared and slave classic root is not the aosp zygote signature`() = runBlocking {
+    fun `shared and slave propagation is inconsistent`() = runBlocking {
         val base = readyResult()
         val report = repository(
             nativeSnapshot = cleanSnapshot(),
@@ -121,9 +163,109 @@ class MountZygoteNextRepositoryTest {
         ).scan()
 
         assertEquals(
+            MountZygoteNextNamespaceAssessment.INCONSISTENT,
+            report.zygoteNext.namespaceAssessment,
+        )
+    }
+
+    @Test
+    fun `fewer than three common anchors is unverified`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                mainProcess = base.mainProcess.copy(
+                    mountIdsByPoint = mapOf("/" to 240, "/dev" to 241),
+                ),
+                isolatedProcess = base.isolatedProcess.copy(
+                    mountIdsByPoint = mapOf("/" to 24, "/dev" to 25),
+                ),
+            ),
+        ).scan()
+
+        assertEquals(
             MountZygoteNextNamespaceAssessment.UNVERIFIED,
             report.zygoteNext.namespaceAssessment,
         )
+    }
+
+    @Test
+    fun `shared and master on isolated root is inconsistent`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                isolatedProcess = base.isolatedProcess.copy(
+                    rootPropagation = "shared:1 master:2",
+                ),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.INCONSISTENT,
+            report.zygoteNext.namespaceAssessment,
+        )
+        assertEquals(
+            MountMethodOutcome.WARNING,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
+    }
+
+    @Test
+    fun `private isolated root is a namespace anomaly`() = runBlocking {
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = readyResult().copy(
+                isolatedProcess = readyResult().isolatedProcess.copy(rootPropagation = "master:1"),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY,
+            report.zygoteNext.namespaceAssessment,
+        )
+        assertEquals(1, report.warningSignalCount)
+        assertEquals(
+            MountMethodOutcome.WARNING,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
+    }
+
+    @Test
+    fun `invalid isolated uid is unverified`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                isolatedProcess = base.isolatedProcess.copy(uid = 10000),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.UNVERIFIED,
+            report.zygoteNext.namespaceAssessment,
+        )
+    }
+
+    @Test
+    fun `contradictory anchor chronology is inconsistent`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                isolatedProcess = base.isolatedProcess.copy(
+                    mountIdsByPoint = mapOf("/" to 250, "/dev" to 251, "/proc" to 252),
+                ),
+            ),
+        ).scan()
+
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.INCONSISTENT,
+            report.zygoteNext.namespaceAssessment,
+        )
+        assertEquals(MountMethodOutcome.WARNING, report.methods.single {
+            it.label == "Zygote next mount view"
+        }.outcome)
     }
 
     @Test
@@ -234,21 +376,35 @@ class MountZygoteNextRepositoryTest {
             sdkInt = 37,
             mainProcess = ZygoteNextProcessSnapshot(
                 available = true,
+                parentPid = 1,
+                uid = 10000,
                 mountNamespaceInode = 10,
                 rootPropagation = "master:1",
                 rootMountId = 240,
                 minimumMountId = 220,
                 maximumMountId = 420,
                 mountCount = 100,
+                mountIdsByPoint = mapOf(
+                    "/" to 240,
+                    "/dev" to 241,
+                    "/proc" to 242,
+                ),
             ),
             isolatedProcess = ZygoteNextProcessSnapshot(
                 available = true,
+                parentPid = 2,
+                uid = 99020,
                 mountNamespaceInode = 20,
                 rootPropagation = "shared:1",
                 rootMountId = 24,
                 minimumMountId = 20,
                 maximumMountId = 210,
                 mountCount = 101,
+                mountIdsByPoint = mapOf(
+                    "/" to 24,
+                    "/dev" to 25,
+                    "/proc" to 26,
+                ),
                 markers = markers.toList(),
             ),
         )

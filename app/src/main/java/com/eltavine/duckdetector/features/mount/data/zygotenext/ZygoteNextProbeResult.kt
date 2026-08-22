@@ -49,6 +49,7 @@ data class ZygoteNextProcessSnapshot(
     val minimumMountId: Long = 0L,
     val maximumMountId: Long = 0L,
     val mountCount: Int = 0,
+    val mountIdsByPoint: Map<String, Long> = emptyMap(),
     val markers: List<ZygoteNextMountMarker> = emptyList(),
     val errorDetail: String = "",
 )
