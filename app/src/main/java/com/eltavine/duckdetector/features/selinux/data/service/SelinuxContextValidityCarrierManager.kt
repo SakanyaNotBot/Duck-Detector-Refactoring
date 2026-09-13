@@ -25,6 +25,8 @@ import android.os.IBinder
 import com.eltavine.duckdetector.features.selinux.data.native.SelinuxContextValidityBridge
 import com.eltavine.duckdetector.features.selinux.data.native.SelinuxContextValiditySnapshot
 import com.eltavine.duckdetector.features.selinux.data.probes.SelinuxPolicyloadSeqnoState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -108,8 +110,11 @@ open class SelinuxContextValidityCarrierManager(
         }
 
         val intent = Intent(context, serviceClass)
+        // onServiceConnected below makes a blocking Binder call, so it must not run on the
+        // main thread's executor - that previously froze the UI (and could trigger an ANR)
+        // for as long as the remote process took to answer.
         bound = runCatching {
-            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
         }.getOrDefault(false)
         if (!bound) {
             finish(onError("The dedicated SELinux carrier process could not be bound."))
@@ -126,5 +131,6 @@ open class SelinuxContextValidityCarrierManager(
 
     companion object {
         private const val DETECTION_TIMEOUT_MS = 15_000L
+        private val REMOTE_CALLBACK_EXECUTOR = Dispatchers.IO.asExecutor()
     }
 }

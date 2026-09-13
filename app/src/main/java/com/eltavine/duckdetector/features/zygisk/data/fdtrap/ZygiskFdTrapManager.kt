@@ -22,6 +22,8 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -133,8 +135,11 @@ class ZygiskFdTrapManager(
         }
 
         val intent = Intent(context, ZygiskFdTrapDetectorService::class.java)
+        // onServiceConnected below makes a blocking Binder call, so it must not run on the
+        // main thread's executor - that previously froze the UI (and could trigger an ANR)
+        // for as long as the remote process took to answer.
         bound = runCatching {
-            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
         }.getOrDefault(false)
         if (!bound) {
             finish(
@@ -156,5 +161,6 @@ class ZygiskFdTrapManager(
 
     companion object {
         private const val DETECTION_TIMEOUT_MS = 7_000L
+        private val REMOTE_CALLBACK_EXECUTOR = Dispatchers.IO.asExecutor()
     }
 }

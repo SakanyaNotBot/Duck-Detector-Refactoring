@@ -27,6 +27,8 @@ import com.eltavine.duckdetector.features.virtualization.data.native.Sacrificial
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationNativeBridge
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationRemoteProfile
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationRemoteSnapshot
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -178,6 +180,9 @@ open class VirtualizationProbeManager(
         val intent = Intent(context, serviceClass)
         // AUTO_CREATE keeps the helper alive for this snapshot; finish/cancellation unbind it so
         // a failed Binder call cannot leave an isolated process retained.
+        // onServiceConnected below makes a blocking Binder call, so it must not run on the
+        // main thread's executor - that previously froze the UI (and could trigger an ANR)
+        // for as long as the remote process took to answer.
         bound = runCatching {
             if (expectedProfile == VirtualizationRemoteProfile.ISOLATED &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
@@ -186,11 +191,11 @@ open class VirtualizationProbeManager(
                     intent,
                     Context.BIND_AUTO_CREATE,
                     ISOLATED_INSTANCE_NAME,
-                    context.mainExecutor,
+                    REMOTE_CALLBACK_EXECUTOR,
                     connection,
                 )
             } else {
-                context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+                context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
             }
         }.getOrDefault(false)
         if (!bound) {
@@ -210,5 +215,6 @@ open class VirtualizationProbeManager(
         private const val ISOLATED_INSTANCE_NAME = "duck_mount_view"
         private const val DETECTION_TIMEOUT_MS = 6_000L
         private const val PROC_MOUNT_VIEW_TIMEOUT_MS = 15_000L
+        private val REMOTE_CALLBACK_EXECUTOR = Dispatchers.IO.asExecutor()
     }
 }

@@ -407,7 +407,6 @@ fun DuckDetectorApp() {
 
             AlphaBuildWarningOverlay(
                 forceVisible = agreementAccepted &&
-                        startupPoliciesReady &&
                         requiresAlphaAcknowledgement &&
                         !alphaAcknowledged,
                 onDismissed = {
