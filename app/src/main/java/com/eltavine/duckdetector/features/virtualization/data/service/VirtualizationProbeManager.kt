@@ -27,6 +27,7 @@ import com.eltavine.duckdetector.features.virtualization.data.native.Sacrificial
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationNativeBridge
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationRemoteProfile
 import com.eltavine.duckdetector.features.virtualization.data.native.VirtualizationRemoteSnapshot
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -139,18 +140,24 @@ open class VirtualizationProbeManager(
         onNullBinder: () -> T,
         onError: (String) -> T,
     ): T = suspendCancellableCoroutine { continuation ->
-        var bound = false
+        val bindAttemptFinished = AtomicBoolean(false)
+        val cleanupRequested = AtomicBoolean(false)
+        val unbindAttempted = AtomicBoolean(false)
+        val completionAttempted = AtomicBoolean(false)
         lateinit var connection: ServiceConnection
 
-        fun finish(result: T) {
-            if (!continuation.isActive) {
-                return
-            }
-            if (bound) {
+        fun requestCleanup() {
+            cleanupRequested.set(true)
+            if (bindAttemptFinished.get() && unbindAttempted.compareAndSet(false, true)) {
                 runCatching { context.unbindService(connection) }
-                bound = false
             }
-            continuation.resume(result)
+        }
+
+        fun finish(result: T) {
+            requestCleanup()
+            if (completionAttempted.compareAndSet(false, true)) {
+                continuation.resume(result)
+            }
         }
 
         connection = object : ServiceConnection {
@@ -177,13 +184,20 @@ open class VirtualizationProbeManager(
             override fun onServiceDisconnected(name: ComponentName?) = Unit
         }
 
+        continuation.invokeOnCancellation {
+            requestCleanup()
+        }
+        if (!continuation.isActive) {
+            return@suspendCancellableCoroutine
+        }
+
         val intent = Intent(context, serviceClass)
         // AUTO_CREATE keeps the helper alive for this snapshot; finish/cancellation unbind it so
         // a failed Binder call cannot leave an isolated process retained.
         // onServiceConnected below makes a blocking Binder call, so it must not run on the
         // main thread's executor - that previously froze the UI (and could trigger an ANR)
         // for as long as the remote process took to answer.
-        bound = runCatching {
+        val bound = runCatching {
             if (expectedProfile == VirtualizationRemoteProfile.ISOLATED &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             ) {
@@ -198,16 +212,17 @@ open class VirtualizationProbeManager(
                 context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
             }
         }.getOrDefault(false)
+
+        // ActivityManager may publish an already-running service before bindService() returns.
+        // The executor callback can therefore request cleanup before the bind attempt finishes.
+        bindAttemptFinished.set(true)
+        if (cleanupRequested.get()) {
+            requestCleanup()
+        }
+
         if (!bound) {
             finish(onError("The dedicated virtualization probe process could not be bound."))
             return@suspendCancellableCoroutine
-        }
-
-        continuation.invokeOnCancellation {
-            if (bound) {
-                runCatching { context.unbindService(connection) }
-                bound = false
-            }
         }
     }
 
