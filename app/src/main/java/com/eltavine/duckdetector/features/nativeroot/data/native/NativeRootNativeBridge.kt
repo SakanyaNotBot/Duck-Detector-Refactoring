@@ -76,6 +76,17 @@ class NativeRootNativeBridge {
             "PRCTL_HIT" -> copy(prctlProbeHit = value.asBool())
             "KERNELPATCH_SIDE_CHANNEL_ATTACK" -> copy(kernelPatchSideChannel = value.asBool())
             "KERNELPATCH_SIDE_CHANNEL_DETAIL" -> copy(kernelPatchSideChannelDetail = value.decodeValue())
+            "KERNELPATCH_SUPERKEY" -> copy(kernelPatchSuperkey = value.asBool())
+            "KERNELPATCH_SUPERKEY_AVAILABLE" -> copy(kernelPatchSuperkeyAvailable = value.asBool())
+            "KERNELPATCH_SUPERKEY_CHECKED" -> copy(
+                kernelPatchSuperkeyCheckedCount = value.toIntOrNull() ?: kernelPatchSuperkeyCheckedCount
+            )
+
+            "KERNELPATCH_SUPERKEY_HITS" -> copy(
+                kernelPatchSuperkeyHitCount = value.toIntOrNull() ?: kernelPatchSuperkeyHitCount
+            )
+
+            "KERNELPATCH_SUPERKEY_DETAIL" -> copy(kernelPatchSuperkeyDetail = value.decodeValue())
             "DEVPTS_ABNORMAL_PERMISSION_FOUND" -> copy(devptsAbnormalPermission = value.asBool())
             "DEVPTS_ABNORMAL_PERMISSION_AVAILABLE" -> copy(devptsAbnormalPermissionAvailable = value.asBool())
             "DEVPTS_ABNORMAL_PERMISSION_CHECKED" -> copy(
@@ -89,6 +100,9 @@ class NativeRootNativeBridge {
             )
 
             "DEVPTS_ABNORMAL_PERMISSION_DETAIL" -> copy(devptsAbnormalPermissionDetail = value.decodeValue())
+            "PERMISSION_BOUNDARY_FOUND" -> copy(permissionBoundaryDetected = value.asBool())
+            "PERMISSION_BOUNDARY_AVAILABLE" -> copy(permissionBoundaryAvailable = value.asBool())
+            "PERMISSION_BOUNDARY_DETAIL" -> copy(permissionBoundaryDetail = value.decodeValue())
             "KSU_SUPERCALL_ATTEMPTED" -> copy(ksuSupercallAttempted = value.asBool())
             "KSU_SUPERCALL_HIT" -> copy(ksuSupercallProbeHit = value.asBool())
             "KSU_SUPERCALL_BLOCKED" -> copy(ksuSupercallBlocked = value.asBool())

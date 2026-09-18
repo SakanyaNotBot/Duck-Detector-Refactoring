@@ -96,6 +96,11 @@ data class NativeRootReport(
     val methods: List<NativeRootMethodResult>,
     val errorMessage: String? = null,
     val kernelPatchSideChannel: Boolean = false,
+    val kernelPatchSuperkey: Boolean = false,
+    val kernelPatchSuperkeyAvailable: Boolean = false,
+    val kernelPatchSuperkeyCheckedCount: Int = 0,
+    val kernelPatchSuperkeyHitCount: Int = 0,
+    val kernelPatchSuperkeyDetail: String = "",
     val ksuSupercallAttempted: Boolean = false,
     val ksuSupercallProbeHit: Boolean = false,
     val ksuSupercallBlocked: Boolean = false,
@@ -116,6 +121,10 @@ data class NativeRootReport(
     val ksuManagerPackagePresent: Boolean = false,
     val ksuManagerTraitHitCount: Int = 0,
     val ksuManagerVisibilityRestricted: Boolean = false,
+    val tempRootDetected: Boolean = false,
+    val tempRootCveExploitDetected: Boolean = false,
+    val tempRootArtifactHitCount: Int = 0,
+    val tempRootArtifactCheckCount: Int = 0,
 ) {
     val directFindings: List<NativeRootFinding>
         get() = findings.filter { it.group == NativeRootGroup.SYSCALL || it.group == NativeRootGroup.SIDE_CHANNEL }
@@ -154,7 +163,8 @@ data class NativeRootReport(
             if (aPatchDetected) add("AP")
             if (magiskDetected) add("Mg")
             if (susfsDetected && !contains("SUSFS")) add("SUSFS")
-            if (rootDetected && !kernelSuDetected && !aPatchDetected && !magiskDetected) add("Root")
+            if (tempRootDetected && !contains("TempRoot")) add("TempRoot")
+            if (rootDetected && !kernelSuDetected && !aPatchDetected && !magiskDetected && !tempRootDetected) add("Root")
         }
 
     companion object {

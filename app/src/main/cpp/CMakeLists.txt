@@ -56,6 +56,10 @@ set(SYSTEM_PROPERTIES_SOURCES
     systemproperties/native_bridge.cpp
 )
 
+set(BOOTLOADER_SOURCES
+    bootloader/widevine_native_bridge.cpp
+)
+
 set(MOUNT_SOURCES
     mount/detector_core.cpp
     mount/native_bridge.cpp
@@ -94,7 +98,9 @@ set(NATIVE_ROOT_SOURCES
     nativeroot/cgroup_bridge.cpp
     nativeroot/probes/prctl_probe.cpp
     nativeroot/probes/kernelpatch_nr_supercall_latency_probe.cpp
+    nativeroot/probes/kernelpatch_superkey_probe.cpp
     nativeroot/probes/devpts_abnormal_permission_probe.cpp
+    nativeroot/probes/permission_boundary_probe.cpp
     nativeroot/probes/ksu_supercall_probe.cpp
     nativeroot/probes/susfs_probe.cpp
     nativeroot/probes/self_process_ioc_probe.cpp
@@ -167,6 +173,7 @@ add_library(duckdetector SHARED
     ${CUSTOM_ROM_SOURCES}
     ${KERNEL_CHECK_SOURCES}
     ${SYSTEM_PROPERTIES_SOURCES}
+    ${BOOTLOADER_SOURCES}
     ${MOUNT_SOURCES}
     ${PRELOAD_SOURCES}
     ${MEMORY_SOURCES}
@@ -203,6 +210,7 @@ target_link_libraries(duckdetector
     EGL
     GLESv2
     log
+    mediandk
 )
 
 # Android 17 native isolated services are loaded by zygote_next without ART. The framework's

@@ -28,6 +28,8 @@ import com.eltavine.duckdetector.features.nativeroot.data.probes.MountNamespaceD
 import com.eltavine.duckdetector.features.nativeroot.data.probes.MountNamespaceDriftProbeResult
 import com.eltavine.duckdetector.features.nativeroot.data.probes.RootProcessAuditProbe
 import com.eltavine.duckdetector.features.nativeroot.data.probes.ShellTmpMetadataProbe
+import com.eltavine.duckdetector.features.nativeroot.data.probes.TempRootArtifactProbe
+import com.eltavine.duckdetector.features.nativeroot.data.probes.TempRootArtifactProbeResult
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootFinding
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootFindingSeverity
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootGroup
@@ -49,6 +51,7 @@ class NativeRootRepository(
     ),
     private val kernelSuManagerFingerprintProbe: KernelSuManagerFingerprintProbe =
         KernelSuManagerFingerprintProbe(context?.applicationContext),
+    private val tempRootArtifactProbe: TempRootArtifactProbe = TempRootArtifactProbe(),
 ) {
 
     suspend fun scan(): NativeRootReport = withContext(Dispatchers.IO) {
@@ -69,13 +72,15 @@ class NativeRootRepository(
         val cgroupResult = cgroupProcessLeakProbe.run()
         val mountNamespaceResult = mountNamespaceDriftProbe.run()
         val managerFingerprintResult = kernelSuManagerFingerprintProbe.run()
+        val tempRootArtifactResult = tempRootArtifactProbe.run()
         val findings =
             nativeFindings +
                     shellTmpResult.findings +
                     rootProcessResult.findings +
                     cgroupResult.findings +
                     mountNamespaceResult.findings +
-                    managerFingerprintResult.findings
+                    managerFingerprintResult.findings +
+                    tempRootArtifactResult.findings
 
         return NativeRootReport(
             stage = NativeRootStage.READY,
@@ -112,8 +117,14 @@ class NativeRootRepository(
                 cgroupResult = cgroupResult,
                 mountNamespaceResult = mountNamespaceResult,
                 managerFingerprintResult = managerFingerprintResult,
+                tempRootArtifactResult = tempRootArtifactResult,
             ),
             kernelPatchSideChannel = snapshot.kernelPatchSideChannel,
+            kernelPatchSuperkey = snapshot.kernelPatchSuperkey,
+            kernelPatchSuperkeyAvailable = snapshot.kernelPatchSuperkeyAvailable,
+            kernelPatchSuperkeyCheckedCount = snapshot.kernelPatchSuperkeyCheckedCount,
+            kernelPatchSuperkeyHitCount = snapshot.kernelPatchSuperkeyHitCount,
+            kernelPatchSuperkeyDetail = snapshot.kernelPatchSuperkeyDetail,
             ksuSupercallAttempted = snapshot.ksuSupercallAttempted,
             ksuSupercallProbeHit = snapshot.ksuSupercallProbeHit,
             ksuSupercallBlocked = snapshot.ksuSupercallBlocked,
@@ -134,6 +145,10 @@ class NativeRootRepository(
             ksuManagerPackagePresent = managerFingerprintResult.packagePresent,
             ksuManagerTraitHitCount = managerFingerprintResult.traitHitCount,
             ksuManagerVisibilityRestricted = managerFingerprintResult.visibilityRestricted,
+            tempRootDetected = tempRootArtifactResult.tempRootDetected,
+            tempRootCveExploitDetected = tempRootArtifactResult.cveExploitDetected,
+            tempRootArtifactHitCount = tempRootArtifactResult.hitCount,
+            tempRootArtifactCheckCount = tempRootArtifactResult.checkedCount,
         )
     }
 
@@ -145,6 +160,7 @@ class NativeRootRepository(
         cgroupResult: CgroupProcessLeakProbeResult,
         mountNamespaceResult: MountNamespaceDriftProbeResult,
         managerFingerprintResult: KernelSuManagerFingerprintProbeResult,
+        tempRootArtifactResult: TempRootArtifactProbeResult,
     ): List<NativeRootMethodResult> {
         val directFindings =
             findings.filter { it.group == NativeRootGroup.SYSCALL || it.group == NativeRootGroup.SIDE_CHANNEL }
@@ -214,6 +230,28 @@ class NativeRootRepository(
                 },
             ),
             NativeRootMethodResult(
+                label = "kernelpatch superkey",
+                summary = when {
+                    snapshot.kernelPatchSuperkey -> "Detected"
+                    !snapshot.kernelPatchSuperkeyAvailable -> "Unavailable"
+                    else -> "Clean"
+                },
+                outcome = when {
+                    snapshot.kernelPatchSuperkey -> NativeRootMethodOutcome.DETECTED
+                    !snapshot.kernelPatchSuperkeyAvailable -> NativeRootMethodOutcome.SUPPORT
+                    else -> NativeRootMethodOutcome.CLEAN
+                },
+                detail = buildString {
+                    append("Passes __NR_supercall an untouched anonymous page together with a length the kernel rejects before it derives a user pointer, ")
+                    append("so a stock kernel never reads arg0 and the page keeps its empty PTE.\n")
+                    append("KernelPatch reads arg0 to compare it against the superkey ahead of the syscall body, which faults the page in; mincore then reports it resident.\n")
+                    append("This is a state check, so it does not depend on timing or CPU frequency.\n")
+                    append("A positive residency hit is conclusive on any kernel version, but a negative result is only treated as Clean inside the probe's conservative faulting-uaccess scope (kernel <= 6.6). Kernel 6.7+, or an unparseable kernel release, is reported as Unavailable instead of turning a known nofault blind spot into a false Clean verdict.\n")
+                    append("A run with a failed page mapping, no control page, a resident control page, a pre-resident attempt, an incomplete attempt set, or a failed residency read is also reported as Unavailable rather than Clean.\n")
+                    append("Test Result: ${snapshot.kernelPatchSuperkeyDetail}")
+                },
+            ),
+            NativeRootMethodResult(
                 label = "devpts permission check",
                 summary = when {
                     snapshot.devptsAbnormalPermission -> "Detected"
@@ -241,6 +279,26 @@ class NativeRootRepository(
                     }
                     append("\nTest Result: \n")
                     append(snapshot.devptsAbnormalPermissionDetail)
+                },
+            ),
+            NativeRootMethodResult(
+                label = "permission boundary check",
+                summary = when {
+                    snapshot.permissionBoundaryDetected -> "Detected"
+                    !snapshot.permissionBoundaryAvailable -> "Unavailable"
+                    else -> "Clean"
+                },
+                outcome = when {
+                    snapshot.permissionBoundaryDetected -> NativeRootMethodOutcome.DETECTED
+                    !snapshot.permissionBoundaryAvailable -> NativeRootMethodOutcome.SUPPORT
+                    else -> NativeRootMethodOutcome.CLEAN
+                },
+                detail = buildString {
+                    append("Checks SELinux MAC and sandbox permission boundaries (Netlink RTM_GETLINK, RTM_GETNEIGH).")
+                    append("\nUnder AOSP sepolicy, untrusted_app is strictly forbidden from querying physical hardware MAC or ARP neighbor tables on API 30+.")
+                    append("\nIf physical Wi-Fi/Ethernet MAC is exposed, or valid unicast LAN ARP entries are leaked (via Magisk sepolicy injection, policy reload corruption, or exploit bypass), it indicates a permission boundary breach.")
+                    append("\nTest Result:\n")
+                    append(snapshot.permissionBoundaryDetail)
                 },
             ),
             NativeRootMethodResult(
@@ -430,6 +488,21 @@ class NativeRootRepository(
                     else -> NativeRootMethodOutcome.SUPPORT
                 },
                 detail = "Read a small catalog of root-specific properties such as ro.kernel.ksu and APatch/KernelPatch variants.",
+            ),
+            NativeRootMethodResult(
+                label = "tempRootArtifacts",
+                summary = when {
+                    tempRootArtifactResult.cveExploitDetected -> "CVE-2026-43499"
+                    tempRootArtifactResult.tempRootDetected -> "${tempRootArtifactResult.hitCount} hit(s)"
+                    tempRootArtifactResult.available -> "Clean"
+                    else -> "Unavailable"
+                },
+                outcome = when {
+                    tempRootArtifactResult.tempRootDetected -> NativeRootMethodOutcome.DETECTED
+                    tempRootArtifactResult.available -> NativeRootMethodOutcome.CLEAN
+                    else -> NativeRootMethodOutcome.SUPPORT
+                },
+                detail = "Scans /data/local/tmp for temp root exploit artifacts (ksud, temp_su, ksu-helper, ksu-payload, libcve43499root.so). Files matching CVE-2026-43499 pattern indicate an active temporary root escalation.",
             ),
             NativeRootMethodResult(
                 label = "nativeLibrary",
