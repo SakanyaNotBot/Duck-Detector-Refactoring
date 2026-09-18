@@ -430,10 +430,6 @@ namespace ducktee::common {
         if (arm64_cntvct_self_check(&failure_reason)) {
             out->kind = LocalTimerKind::Arm64Cntvct;
             out->source_label = "arm64_cntvct";
-            if (affinity_attempted && !affinity_ok) {
-                affinity_ok = bind_current_thread_to_cpu0();
-                out->affinity_status = affinity_ok ? "bound_cpu0" : "bind_failed";
-            }
             return true;
         }
 
