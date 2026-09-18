@@ -24,6 +24,7 @@ import com.eltavine.duckdetector.features.mount.domain.MountMethodOutcome
 import com.eltavine.duckdetector.features.mount.domain.MountMethodResult
 import com.eltavine.duckdetector.features.mount.domain.MountReport
 import com.eltavine.duckdetector.features.mount.domain.MountStage
+import com.eltavine.duckdetector.features.mount.domain.MountZygoteNextNamespaceAssessment
 import com.eltavine.duckdetector.features.mount.domain.MountZygoteNextReport
 import com.eltavine.duckdetector.features.mount.domain.MountZygoteNextState
 import com.eltavine.duckdetector.features.mount.ui.model.MountCardModel
@@ -410,10 +411,15 @@ class MountCardModelMapper {
             MountZygoteNextState.PENDING -> "Pending"
             MountZygoteNextState.UNSUPPORTED -> "Requires Android 17"
             MountZygoteNextState.UNAVAILABLE -> "Unavailable"
-            MountZygoteNextState.READY -> when {
-                result.leakDetected -> "Root mount"
-                !result.hasInitNamespaceCoverage -> "Coverage unverified"
-                else -> "Clean"
+            MountZygoteNextState.READY -> if (result.leakDetected) {
+                "Root mount"
+            } else {
+                when (result.namespaceAssessment) {
+                    MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY -> "Private namespace anomaly"
+                    MountZygoteNextNamespaceAssessment.INCONSISTENT -> "Evidence inconsistent"
+                    MountZygoteNextNamespaceAssessment.UNVERIFIED -> "Coverage unverified"
+                    MountZygoteNextNamespaceAssessment.LIKELY_INIT -> "Clean"
+                }
             }
         }
         val status = when (result.state) {
@@ -421,10 +427,18 @@ class MountCardModelMapper {
             MountZygoteNextState.UNSUPPORTED,
             MountZygoteNextState.UNAVAILABLE -> DetectorStatus.info(InfoKind.SUPPORT)
 
-            MountZygoteNextState.READY -> when {
-                result.leakDetected -> DetectorStatus.danger()
-                !result.hasInitNamespaceCoverage -> DetectorStatus.info(InfoKind.SUPPORT)
-                else -> DetectorStatus.allClear()
+            MountZygoteNextState.READY -> if (result.leakDetected) {
+                DetectorStatus.danger()
+            } else {
+                when (result.namespaceAssessment) {
+                    MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY,
+                    MountZygoteNextNamespaceAssessment.INCONSISTENT -> DetectorStatus.warning()
+
+                    MountZygoteNextNamespaceAssessment.UNVERIFIED ->
+                        DetectorStatus.info(InfoKind.SUPPORT)
+
+                    MountZygoteNextNamespaceAssessment.LIKELY_INIT -> DetectorStatus.allClear()
+                }
             }
         }
         val markerDetail = result.dangerousMarkers.joinToString("\n") { marker ->

@@ -333,6 +333,10 @@ class MountZygoteNextRepositoryTest {
         assertEquals(MountStage.FAILED, report.stage)
         assertTrue(report.zygoteNext.leakDetected)
         assertEquals(1, report.dangerSignalCount)
+        assertEquals(
+            MountMethodOutcome.DANGER,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
     }
 
     @Test
@@ -347,6 +351,51 @@ class MountZygoteNextRepositoryTest {
         assertTrue(report.zygoteNext.leakDetected)
         assertEquals(1, report.dangerSignalCount)
         assertEquals("native bridge crashed", report.errorMessage)
+    }
+
+    @Test
+    fun `private namespace warning survives unavailable native snapshot`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = MountNativeSnapshot(available = false),
+            zygoteNextResult = base.copy(
+                isolatedProcess = base.isolatedProcess.copy(rootPropagation = "master:1"),
+            ),
+        ).scan()
+
+        assertEquals(MountStage.FAILED, report.stage)
+        assertEquals(1, report.warningSignalCount)
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.PRIVATE_ANOMALY.name,
+            report.warningFindings.single { it.id == "zygote_next_namespace_anomaly" }.value,
+        )
+        assertEquals(
+            MountMethodOutcome.WARNING,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
+    }
+
+    @Test
+    fun `inconsistent namespace warning survives thrown native failure`() = runBlocking {
+        val base = readyResult()
+        val report = repository(
+            nativeSnapshot = cleanSnapshot(),
+            zygoteNextResult = base.copy(
+                mainProcess = base.mainProcess.copy(rootPropagation = "shared:2 master:1"),
+            ),
+            nativeFailure = IllegalStateException("native bridge crashed"),
+        ).scan()
+
+        assertEquals(MountStage.FAILED, report.stage)
+        assertEquals(1, report.warningSignalCount)
+        assertEquals(
+            MountZygoteNextNamespaceAssessment.INCONSISTENT.name,
+            report.warningFindings.single { it.id == "zygote_next_namespace_anomaly" }.value,
+        )
+        assertEquals(
+            MountMethodOutcome.WARNING,
+            report.methods.single { it.label == "Zygote next mount view" }.outcome,
+        )
     }
 
     private fun repository(

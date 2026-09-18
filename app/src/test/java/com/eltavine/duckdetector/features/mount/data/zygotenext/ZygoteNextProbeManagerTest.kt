@@ -34,20 +34,7 @@ class ZygoteNextProbeManagerTest {
 
         assertEquals(ZygoteNextProbeState.UNAVAILABLE, result.state)
         assertTrue(result.errorDetail.contains("could not be bound"))
-        assertEquals(0, binding.unbindCount)
-    }
-
-    @Test
-    fun `stopped native zygote is unavailable without binding`() = runBlocking {
-        val binding = FakeBinding { error("bind must not be called") }
-
-        val result = manager(
-            binding = binding,
-            availability = ZygoteNextAvailability { false },
-        ).collect()
-
-        assertEquals(ZygoteNextProbeState.UNAVAILABLE, result.state)
-        assertTrue(result.errorDetail.contains("not running"))
+        assertEquals(1, binding.bindCount)
         assertEquals(0, binding.unbindCount)
     }
 
@@ -113,7 +100,6 @@ class ZygoteNextProbeManagerTest {
 
     private fun manager(
         binding: ZygoteNextServiceBinding,
-        availability: ZygoteNextAvailability = ZygoteNextAvailability { true },
         timeoutMillis: Long = 1_000L,
         payloadCollector: (IBinder) -> String = { error("Payload should not be queried.") },
     ): ZygoteNextProbeManager {
@@ -130,7 +116,6 @@ class ZygoteNextProbeManagerTest {
                 }
             },
             serviceBinding = binding,
-            availability = availability,
             timeoutMillis = timeoutMillis,
             payloadCollector = payloadCollector,
             testOnly = Unit,
@@ -147,10 +132,15 @@ class ZygoteNextProbeManagerTest {
     private class FakeBinding(
         private val bindAction: (ServiceConnection) -> Boolean,
     ) : ZygoteNextServiceBinding {
+        var bindCount: Int = 0
+            private set
         var unbindCount: Int = 0
             private set
 
-        override fun bind(connection: ServiceConnection): Boolean = bindAction(connection)
+        override fun bind(connection: ServiceConnection): Boolean {
+            bindCount += 1
+            return bindAction(connection)
+        }
 
         override fun unbind(connection: ServiceConnection) {
             unbindCount += 1

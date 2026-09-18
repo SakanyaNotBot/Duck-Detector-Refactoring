@@ -27,8 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
@@ -36,28 +34,6 @@ internal interface ZygoteNextServiceBinding {
     fun bind(connection: ServiceConnection): Boolean
 
     fun unbind(connection: ServiceConnection)
-}
-
-internal fun interface ZygoteNextAvailability {
-    fun isRunning(): Boolean
-}
-
-private class SystemPropertyZygoteNextAvailability : ZygoteNextAvailability {
-    override fun isRunning(): Boolean {
-        val serviceState = getProperty("init.svc.zygote_next")
-        return serviceState == "running"
-    }
-
-    private fun getProperty(name: String): String {
-        return runCatching {
-            val process = ProcessBuilder("/system/bin/getprop", name)
-                .redirectErrorStream(true)
-                .start()
-            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-            process.waitFor()
-            output.trim()
-        }.getOrDefault("")
-    }
 }
 
 private class AndroidZygoteNextServiceBinding(
@@ -83,7 +59,6 @@ open class ZygoteNextProbeManager private constructor(
     private val sdkIntProvider: () -> Int,
     private val localProbe: ZygoteNextLocalProbe,
     private val serviceBinding: ZygoteNextServiceBinding?,
-    private val availability: ZygoteNextAvailability,
     private val timeoutMillis: Long,
     private val payloadCollector: (IBinder) -> String,
 ) {
@@ -96,7 +71,6 @@ open class ZygoteNextProbeManager private constructor(
         sdkIntProvider = sdkIntProvider,
         localProbe = localProbe,
         serviceBinding = context?.applicationContext?.let(::AndroidZygoteNextServiceBinding),
-        availability = SystemPropertyZygoteNextAvailability(),
         timeoutMillis = DETECTION_TIMEOUT_MS,
         payloadCollector = { binder -> ZygoteNextProbeProxy(binder).collect() },
     )
@@ -105,7 +79,6 @@ open class ZygoteNextProbeManager private constructor(
         sdkIntProvider: () -> Int,
         localProbe: ZygoteNextLocalProbe,
         serviceBinding: ZygoteNextServiceBinding?,
-        availability: ZygoteNextAvailability = ZygoteNextAvailability { true },
         timeoutMillis: Long,
         payloadCollector: (IBinder) -> String,
         @Suppress("UNUSED_PARAMETER") testOnly: Unit,
@@ -113,7 +86,6 @@ open class ZygoteNextProbeManager private constructor(
         sdkIntProvider = sdkIntProvider,
         localProbe = localProbe,
         serviceBinding = serviceBinding,
-        availability = availability,
         timeoutMillis = timeoutMillis,
         payloadCollector = payloadCollector,
     )
@@ -130,13 +102,6 @@ open class ZygoteNextProbeManager private constructor(
             detail = "Application context was unavailable for the zygote_next service.",
             mainProcess = mainProcess,
         )
-        if (!availability.isRunning()) {
-            return ZygoteNextProbeResult.unavailable(
-                sdkInt = sdkInt,
-                detail = "zygote_next is not running; skipped native-service binding to avoid starting a system zygote.",
-                mainProcess = mainProcess,
-            )
-        }
 
         return withTimeoutOrNull(timeoutMillis) {
             bindAndCollect(binding, sdkInt, mainProcess)
