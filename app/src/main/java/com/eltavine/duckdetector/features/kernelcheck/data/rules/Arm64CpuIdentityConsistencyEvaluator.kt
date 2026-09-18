@@ -46,6 +46,9 @@ class Arm64CpuIdentityConsistencyEvaluator {
                     normalizeMidr(observation.mrsMidr!!, observation.cachedSource)
         }
         val detail = observations.joinToString(separator = "\n", transform = ::formatObservation)
+        val hasCompleteCoverage = status == Arm64CpuIdentityProbeStatus.COMPLETED &&
+                observations.isNotEmpty() &&
+                comparable.size == observations.size
 
         val finding = mismatches.takeIf { it.isNotEmpty() }?.let {
             KernelCheckFinding(
@@ -65,10 +68,15 @@ class Arm64CpuIdentityConsistencyEvaluator {
                 detail = detail,
             )
 
-            comparable.isNotEmpty() -> KernelCheckMethodResult(
+            hasCompleteCoverage -> KernelCheckMethodResult(
                 label = METHOD_LABEL,
                 summary = "${comparable.size} CPU(s) agree",
                 outcome = KernelCheckMethodOutcome.CLEAN,
+                detail = detail,
+            )
+
+            comparable.isNotEmpty() -> supportMethod(
+                summary = "Partial (${comparable.size}/${observations.size} CPUs)",
                 detail = detail,
             )
 

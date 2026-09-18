@@ -102,15 +102,50 @@ class Arm64CpuIdentityConsistencyEvaluatorTest {
         assertEquals(KernelCheckMethodOutcome.SUPPORT, assessment.method.outcome)
     }
 
+    @Test
+    fun `one comparable cpu does not make partial coverage clean`() {
+        val assessment = evaluator.evaluate(
+            status = Arm64CpuIdentityProbeStatus.COMPLETED,
+            observations = listOf(
+                observation(cpu = 0, cached = 0x410fd050, mrs = 0x410fd050),
+                observation(cpu = 7, cached = 0x410fd480, mrs = null),
+            ),
+        )
+
+        assertNull(assessment.finding)
+        assertEquals(KernelCheckMethodOutcome.SUPPORT, assessment.method.outcome)
+        assertEquals("Partial (1/2 CPUs)", assessment.method.summary)
+    }
+
+    @Test
+    fun `affinity failure keeps otherwise matching scan partial`() {
+        val assessment = evaluator.evaluate(
+            status = Arm64CpuIdentityProbeStatus.COMPLETED,
+            observations = listOf(
+                observation(cpu = 0, cached = 0x410fd050, mrs = 0x410fd050),
+                observation(
+                    cpu = 7,
+                    cached = null,
+                    mrs = null,
+                    affinitySucceeded = false,
+                ),
+            ),
+        )
+
+        assertEquals(KernelCheckMethodOutcome.SUPPORT, assessment.method.outcome)
+        assertEquals("Partial (1/2 CPUs)", assessment.method.summary)
+    }
+
     private fun observation(
         cpu: Int,
         cached: Long?,
         mrs: Long?,
         source: CachedCpuIdentitySource = CachedCpuIdentitySource.SYSFS,
+        affinitySucceeded: Boolean = true,
     ): Arm64CpuIdentityObservation {
         return Arm64CpuIdentityObservation(
             cpu = cpu,
-            affinitySucceeded = true,
+            affinitySucceeded = affinitySucceeded,
             cachedSource = source,
             cachedMidr = cached,
             mrsMidr = mrs,
