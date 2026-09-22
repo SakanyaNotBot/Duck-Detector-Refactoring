@@ -89,6 +89,7 @@ class KernelSuThroneHuntRound(
                 stimulusApplied = false,
                 watchDenied = carrierState.watchDenied,
                 packageDirectory = carrierState.packageDirectory,
+                watchDescriptor = carrierState.watchDescriptor,
                 detail = baseline.collection.explain("Baseline event drain failed"),
             )
         }

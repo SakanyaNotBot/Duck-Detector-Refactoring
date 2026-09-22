@@ -49,7 +49,11 @@ namespace duckdetector::nativeroot {
         ThroneHuntWatchResult result;
         result.package_directory = package_directory;
 
-        const int inotify_fd = inotify_init();
+        // The drain transaction must return immediately when no event is queued. A blocking fd
+        // would park the carrier Binder thread forever on the first empty baseline drain.
+        // drain 事务必须在队列为空时立即返回；阻塞 fd 会让第一次空 baseline drain
+        // 永久挂起 carrier 的 Binder 线程。
+        const int inotify_fd = inotify_init1(IN_NONBLOCK);
         if (inotify_fd < 0) {
             result.error_number = errno;
             result.detail = "inotify_init failed: " + std::string(std::strerror(errno));
