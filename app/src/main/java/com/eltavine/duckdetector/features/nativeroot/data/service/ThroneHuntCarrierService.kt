@@ -21,6 +21,8 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
+import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
 import com.eltavine.duckdetector.features.nativeroot.data.native.ThroneHuntWatchNativeBridge
 
 class ThroneHuntCarrierService : Service() {
@@ -73,6 +75,8 @@ class ThroneHuntCarrierService : Service() {
 
     // Only this path drains. Reading the event stream consumes it, so a setup call that drained
     // would swallow the traversal events raised later during the stimulus window.
+    // 只有这个路径会读取事件流。读取会消费事件，因此 setup 事务一旦 drain，
+    // 就会吞掉后续 stimulus 窗口内的 traversal 事件。
     private fun buildEventPayload(): String {
         return runCatching {
             val state = resolveCarrierState()
@@ -86,6 +90,15 @@ class ThroneHuntCarrierService : Service() {
                 )
             }
             val events = ThroneHuntWatchNativeBridge().drainWatch(state.watchDescriptor)
+            if (!events.collection.isTrustworthy) {
+                return@runCatching ThroneHuntCarrierPayloadCodec.encode(
+                    ThroneHuntCarrierState(
+                        collection = events.collection,
+                        failureReason = events.collection.explain("Throne hunt event drain failed"),
+                        notes = state.notes,
+                    )
+                )
+            }
             buildString {
                 append(ThroneHuntCarrierPayloadCodec.encode(state))
                 append("EVENT_DIRECTORY_OPEN=")
@@ -126,6 +139,10 @@ class ThroneHuntCarrierService : Service() {
                 return decoded
             }
             return ThroneHuntCarrierState(
+                collection = NativeCollectionStatus.failed(
+                    NativeCollectionOutcome.BRIDGE_FAILED,
+                    IllegalStateException("Dedicated app_zygote preload state unavailable."),
+                ),
                 failureReason = "Dedicated app_zygote preload state unavailable.",
                 notes = listOf("Throne hunt carrier did not receive a preloaded app_zygote state."),
             )

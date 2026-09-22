@@ -624,13 +624,15 @@ class NativeRootCardModelMapper {
                     when {
                         report.ksuThroneHuntHitCount > 0 -> "${report.ksuThroneHuntHitCount} hit(s)"
                         report.ksuThroneHuntWatchDenied -> "Watch denied"
-                        report.ksuThroneHuntAvailable -> "Clean"
+                        report.ksuThroneHuntAvailable && report.ksuThroneHuntStimulusApplied -> "Clean"
+                        report.ksuThroneHuntAvailable -> "Stimulus unavailable"
                         else -> "N/A"
                     },
                     when {
                         report.ksuThroneHuntHitCount > 0 -> DetectorStatus.danger()
                         report.ksuThroneHuntWatchDenied -> DetectorStatus.info(InfoKind.SUPPORT)
-                        report.ksuThroneHuntAvailable -> DetectorStatus.allClear()
+                        report.ksuThroneHuntAvailable && report.ksuThroneHuntStimulusApplied -> DetectorStatus.allClear()
+                        report.ksuThroneHuntAvailable -> DetectorStatus.info(InfoKind.SUPPORT)
                         else -> DetectorStatus.info(InfoKind.SUPPORT)
                     },
                 ),
@@ -844,6 +846,7 @@ class NativeRootCardModelMapper {
         return !cgroupAvailable ||
                 !isolatedMountProbeAvailable ||
                 !ksuThroneHuntAvailable ||
+                !ksuThroneHuntStimulusApplied ||
                 ksuManagerVisibilityRestricted ||
                 ksuManagerVisibilityUnknown
     }

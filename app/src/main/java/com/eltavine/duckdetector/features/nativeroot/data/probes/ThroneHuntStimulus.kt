@@ -18,45 +18,72 @@ package com.eltavine.duckdetector.features.nativeroot.data.probes
 
 import android.content.Context
 import android.os.Build
+import com.eltavine.duckdetector.features.nativeroot.data.binder.PackageManagerPrivateBinderClient
+import com.eltavine.duckdetector.features.nativeroot.data.binder.PackageManagerPrivateCallResult
 
 data class ThroneHuntStimulusOutcome(
     val applied: Boolean,
     val detail: String,
 )
 
-// Zero-permission packages.list rewrite. PackageManager.setMimeGroup is hardcoded client-side to
-// the caller's own package (ApplicationPackageManager passes mContext.getPackageName()), and the
-// server only enforces isSameApp(), so no permission is required. The write is coalesced by
-// Settings.scheduleWriteSettings() (10 s), which then lands as a temp file plus rename - exactly
-// the FS_CREATE|FS_MOVE sequence KernelSU's pkg_observer reacts to.
-object ThroneHuntStimulus {
+// Zero-permission packages.list rewrite. The stimulus now bypasses the public
+// ApplicationPackageManager path, which forces `new ArrayList<>(mimeTypes)` before Binder.
+// 零权限 packages.list 重写。刺激现在绕过公开 ApplicationPackageManager 路径，因为公开客户端
+// 会在 Binder 之前强制执行 new ArrayList<>(mimeTypes)。
+class ThroneHuntStimulus(
+    private val binderClient: PackageManagerPrivateBinderClient = PackageManagerPrivateBinderClient(),
+) {
 
-    internal val MARK_A = setOf("application/x-duckdetector-throne-a")
-    internal val MARK_B = setOf("application/x-duckdetector-throne-b")
+    internal val MARK_A = "duckdetector-throne-a"
+    internal val MARK_B = "duckdetector-throne-b"
 
-    // Must match the android:mimeGroup declared by the manifest intent-filter, otherwise
-    // setMimeGroup throws IllegalArgumentException("Unknown MIME group ... for package ...").
-    const val MIME_GROUP = "duckdetector-throne-hunt"
-
-    // WRITE_SETTINGS_DELAY in PackageManagerService is 10 s, and scheduleWriteSettings() guards
-    // with hasMessages() so an already-pending write is never re-armed. The rewrite therefore
-    // cannot land later than 10 s after the stimulus, which makes this a hard upper bound rather
-    // than a guess; the allowance covers search_manager walking /data/app afterwards.
-    const val SETTINGS_WRITE_DELAY_MS = 10_000L
-    const val SEARCH_MANAGER_ALLOWANCE_MS = 3_000L
-    const val SETTINGS_WRITE_WINDOW_MS = SETTINGS_WRITE_DELAY_MS + SEARCH_MANAGER_ALLOWANCE_MS
+    /**
+     * A value is accepted only when the framework can turn it into an intent filter type.
+     * A value must contain `/` with non-empty type/subtype; values without `/` are malformed
+     * and ComponentResolver catches the resulting MalformedMimeTypeException.
+     * 只有框架能把它变成 intent filter 类型时才视为合法；必须包含 `/` 且类型和子类型非空。
+     * 不含 `/` 的值是畸形值，ComponentResolver 会捕获由此产生的 MalformedMimeTypeException。
+     */
+    internal fun isFrameworkValidMime(value: String): Boolean {
+        val slash = value.indexOf('/')
+        return slash > 0 && value.length >= slash + 2
+    }
 
     /**
      * Picks a mark that is guaranteed to differ from [current].
      *
-     * PackageManagerService short-circuits a mime set identical to the current one and never
-     * rewrites packages.list, which would leave the round silently negative. Deriving the new
-     * value from the system's own state - instead of from a counter held in this process - also
-     * keeps it correct across cold starts: a per-process counter restarts at the same phase every
-     * launch, so every session's first round would submit the same value the previous session
-     * ended on and produce nothing but false negatives.
+     * The next value keeps every framework-valid MIME value, removes either malformed sentinel,
+     * and installs the opposite sentinel. That makes the persisted state differ on every call
+     * without changing the effective intent-filter set. This is what avoids PACKAGE_CHANGED while
+     * still scheduling the settings write.
+     * 下一个值会保留所有框架合法 MIME、移除任一畸形哨兵并写入另一个哨兵。这样每次调用
+     * 的持久化状态都会变化，但有效 intent-filter 集合不变；这正是避免 PACKAGE_CHANGED 且
+     * 仍然调度 settings 写入的原因。
      */
-    internal fun nextMark(current: Set<String>?): Set<String> = if (current == MARK_A) MARK_B else MARK_A
+    internal fun nextMark(current: List<String>?): List<String> {
+        val currentValues = current.orEmpty()
+        val validValues = currentValues.filter(::isFrameworkValidMime)
+        val nextSentinel = if (currentValues.contains(MARK_A)) MARK_B else MARK_A
+        return validValues + nextSentinel
+    }
+
+    private fun <T> failureDetail(result: PackageManagerPrivateCallResult<T>): String {
+        return result.detail
+    }
+
+    companion object {
+        // Must match the android:mimeGroup declared by the manifest intent-filter, otherwise
+        // setMimeGroup throws IllegalArgumentException("Unknown MIME group ... for package ...").
+        const val MIME_GROUP = "duckdetector-throne-hunt"
+
+        // WRITE_SETTINGS_DELAY in PackageManagerService is 10 s, and scheduleWriteSettings() guards
+        // with hasMessages() so an already-pending write is never re-armed. The rewrite therefore
+        // cannot land later than 10 s after the stimulus, which makes this a hard upper bound rather
+        // than a guess; the allowance covers search_manager walking /data/app afterwards.
+        const val SETTINGS_WRITE_DELAY_MS = 10_000L
+        const val SEARCH_MANAGER_ALLOWANCE_MS = 3_000L
+        const val SETTINGS_WRITE_WINDOW_MS = SETTINGS_WRITE_DELAY_MS + SEARCH_MANAGER_ALLOWANCE_MS
+    }
 
     fun apply(context: Context): ThroneHuntStimulusOutcome {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -67,15 +94,35 @@ object ThroneHuntStimulus {
             )
         }
 
-        val manager = context.applicationContext.packageManager
+        val packageName = context.applicationContext.packageName
         return runCatching {
-            val current = runCatching { manager.getMimeGroup(MIME_GROUP) }.getOrNull()
+            val currentResult = binderClient.getMimeGroup(packageName, MIME_GROUP)
+            if (!currentResult.isSuccess) {
+                return ThroneHuntStimulusOutcome(
+                    applied = false,
+                    detail = failureDetail(currentResult),
+                )
+            }
+            val current = currentResult.value
             val next = nextMark(current)
-            manager.setMimeGroup(MIME_GROUP, next)
+            val writeResult = binderClient.setMimeGroup(packageName, MIME_GROUP, next)
+            if (!writeResult.isSuccess) {
+                return ThroneHuntStimulusOutcome(
+                    applied = false,
+                    detail = failureDetail(writeResult),
+                )
+            }
 
             // A silent no-op is the one failure this probe cannot afford, because it looks exactly
             // like "no KernelSU". Read the group back and refuse to call the round clean otherwise.
-            val confirmed = runCatching { manager.getMimeGroup(MIME_GROUP) }.getOrNull()
+            val confirmedResult = binderClient.getMimeGroup(packageName, MIME_GROUP)
+            if (!confirmedResult.isSuccess) {
+                return ThroneHuntStimulusOutcome(
+                    applied = false,
+                    detail = failureDetail(confirmedResult),
+                )
+            }
+            val confirmed = confirmedResult.value
             if (confirmed == next) {
                 ThroneHuntStimulusOutcome(
                     applied = true,

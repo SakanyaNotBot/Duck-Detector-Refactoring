@@ -16,7 +16,10 @@
 
 package com.eltavine.duckdetector.features.nativeroot.data.native
 
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
+
 data class ThroneHuntWatchSnapshot(
+    val collection: NativeCollectionStatus = NativeCollectionStatus.Collected,
     val watchInstalled: Boolean = false,
     val watchDescriptor: Int = -1,
     val errorNumber: Int = 0,
@@ -25,6 +28,7 @@ data class ThroneHuntWatchSnapshot(
 )
 
 data class ThroneHuntEventSummary(
+    val collection: NativeCollectionStatus = NativeCollectionStatus.Collected,
     val directoryOpenCount: Int = 0,
     val directoryAccessCount: Int = 0,
     val rawEventCount: Int = 0,

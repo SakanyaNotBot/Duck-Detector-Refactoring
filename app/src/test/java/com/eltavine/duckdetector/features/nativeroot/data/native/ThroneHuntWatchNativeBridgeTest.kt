@@ -16,6 +16,7 @@
 
 package com.eltavine.duckdetector.features.nativeroot.data.native
 
+import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -37,6 +38,7 @@ class ThroneHuntWatchNativeBridgeTest {
             """.trimIndent(),
         )
 
+        assertTrue(snapshot.collection.isTrustworthy)
         assertTrue(snapshot.watchInstalled)
         assertEquals(7, snapshot.watchDescriptor)
         assertEquals("/data/app/~~abc==/com.eltavine.duckdetector-def==", snapshot.packageDirectory)
@@ -50,6 +52,7 @@ class ThroneHuntWatchNativeBridgeTest {
             WATCH_INSTALLED=0
             WATCH_DESCRIPTOR=-1
             WATCH_ERRNO=13
+            WATCH_PACKAGE_DIR=
             WATCH_DETAIL=inotify_add_watch denied for /data/app: Permission denied
             """.trimIndent(),
         )
@@ -60,9 +63,11 @@ class ThroneHuntWatchNativeBridgeTest {
     }
 
     @Test
-    fun `blank watch payload degrades to unavailable snapshot`() {
+    fun `blank watch payload is rejected instead of being read as clean`() {
         val snapshot = bridge.parseWatch("")
 
+        assertFalse(snapshot.collection.isTrustworthy)
+        assertEquals(NativeCollectionOutcome.PAYLOAD_REJECTED, snapshot.collection.outcome)
         assertFalse(snapshot.watchInstalled)
         assertEquals(-1, snapshot.watchDescriptor)
     }
@@ -79,6 +84,7 @@ class ThroneHuntWatchNativeBridgeTest {
             """.trimIndent(),
         )
 
+        assertTrue(summary.collection.isTrustworthy)
         assertEquals(1, summary.directoryOpenCount)
         assertEquals(2, summary.directoryAccessCount)
         assertEquals(5, summary.rawEventCount)
@@ -92,10 +98,22 @@ class ThroneHuntWatchNativeBridgeTest {
             EVENT_DIRECTORY_OPEN=0
             EVENT_DIRECTORY_ACCESS=0
             EVENT_RAW=0
+            EVENT_INVALID=0
+            EVENT_DETAIL=clean
             """.trimIndent(),
         )
 
         assertEquals(0, summary.hitCount)
         assertEquals(0, summary.rawEventCount)
+        assertTrue(summary.collection.isTrustworthy)
+    }
+
+    @Test
+    fun `blank event payload is rejected without a clean result`() {
+        val summary = bridge.parseEvents("")
+
+        assertFalse(summary.collection.isTrustworthy)
+        assertEquals(NativeCollectionOutcome.PAYLOAD_REJECTED, summary.collection.outcome)
+        assertEquals(0, summary.hitCount)
     }
 }

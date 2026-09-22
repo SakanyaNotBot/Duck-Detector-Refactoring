@@ -59,6 +59,19 @@ class KernelSuThroneHuntProbe {
             )
         }
 
+        if (!round.stimulusApplied) {
+            return KernelSuThroneHuntProbeResult(
+                available = true,
+                watchInstalled = true,
+                watchDenied = round.watchDenied,
+                packageDirectory = round.packageDirectory,
+                directoryOpenCount = 0,
+                directoryAccessCount = 0,
+                findings = emptyList(),
+                detail = round.detail,
+            )
+        }
+
         val detail = buildString {
             append("packageDir=")
             append(round.packageDirectory)

@@ -29,7 +29,7 @@ class KernelSuThroneHuntRound(
     private val carrierManager: ThroneHuntCarrierManager = ThroneHuntCarrierManager(
         context?.applicationContext
     ),
-    private val stimulus: ThroneHuntStimulus = ThroneHuntStimulus,
+    private val stimulus: ThroneHuntStimulus = ThroneHuntStimulus(),
 ) {
 
     private val appContext = context?.applicationContext
@@ -42,6 +42,18 @@ class KernelSuThroneHuntRound(
         )
 
         val carrierState = carrierManager.collectSnapshot()
+        if (!carrierState.collection.isTrustworthy) {
+            return KernelSuThroneHuntRoundResult(
+                available = false,
+                stimulusApplied = false,
+                watchDenied = carrierState.watchDenied,
+                packageDirectory = carrierState.packageDirectory,
+                detail = carrierState.collection.explain(
+                    "Throne hunt carrier collection failed",
+                ),
+            )
+        }
+
         if (!carrierState.watchInstalled) {
             return KernelSuThroneHuntRoundResult(
                 available = false,
@@ -58,6 +70,15 @@ class KernelSuThroneHuntRound(
         // packages.list rewrite that kicked off a hunt of its own. Draining it here means the final
         // drain covers the stimulus window only, and none of that can be read as our result.
         val baseline = carrierManager.drainEvents()
+        if (!baseline.collection.isTrustworthy) {
+            return KernelSuThroneHuntRoundResult(
+                available = false,
+                stimulusApplied = false,
+                watchDenied = carrierState.watchDenied,
+                packageDirectory = carrierState.packageDirectory,
+                detail = baseline.collection.explain("Baseline event drain failed"),
+            )
+        }
         val baselineHitCount = baseline.directoryOpenCount + baseline.directoryAccessCount
 
         val outcome = stimulus.apply(context)
@@ -68,8 +89,18 @@ class KernelSuThroneHuntRound(
         // Drained after the wait so the event stream covers the full stimulus window rather than
         // the moment before the settings write landed.
         val observed = carrierManager.drainEvents()
+        if (!observed.collection.isTrustworthy) {
+            return KernelSuThroneHuntRoundResult(
+                available = false,
+                stimulusApplied = outcome.applied,
+                watchDenied = observed.watchDenied,
+                packageDirectory = observed.packageDirectory,
+                watchDescriptor = observed.watchDescriptor,
+                detail = observed.collection.explain("Throne hunt event drain failed"),
+            )
+        }
         return KernelSuThroneHuntRoundResult(
-            available = observed.watchInstalled,
+            available = observed.collection.isTrustworthy && observed.watchInstalled,
             stimulusApplied = outcome.applied,
             watchDenied = observed.watchDenied,
             packageDirectory = observed.packageDirectory,

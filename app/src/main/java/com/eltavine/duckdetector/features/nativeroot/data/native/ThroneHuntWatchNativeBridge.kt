@@ -16,23 +16,60 @@
 
 package com.eltavine.duckdetector.features.nativeroot.data.native
 
-open class ThroneHuntWatchNativeBridge {
+import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
+import com.eltavine.duckdetector.core.native.NativePayloadCodec
+import com.eltavine.duckdetector.core.native.NativePayloadContract
+import com.eltavine.duckdetector.core.native.NativeSnapshotCollector
 
-    fun installWatch(packageDirectory: String): ThroneHuntWatchSnapshot {
-        return runCatching { parseWatch(nativeInstallWatch(packageDirectory)) }
-            .getOrDefault(ThroneHuntWatchSnapshot(packageDirectory = packageDirectory))
-    }
+// The collector makes the bridge a pure evidence adapter: the platform library, the JNI method,
+// and the payload parser are no longer conflated into a single Boolean.
+// 采集器把本桥接收敛成纯证据适配层，不再把平台库、JNI 方法和 payload 解析折叠成同一个布尔值。
+open class ThroneHuntWatchNativeBridge(
+    private val collector: NativeSnapshotCollector = NativeSnapshotCollector.Default,
+) {
 
-    open fun drainWatch(watchDescriptor: Int): ThroneHuntEventSummary {
-        return runCatching { parseEvents(nativeDrainWatch(watchDescriptor)) }
-            .getOrDefault(ThroneHuntEventSummary())
-    }
+    fun installWatch(packageDirectory: String): ThroneHuntWatchSnapshot = collector.collect(
+        readPayload = { nativeInstallWatch(packageDirectory) },
+        parse = ::parseWatch,
+        unavailable = { status ->
+            ThroneHuntWatchSnapshot(
+                collection = status,
+                packageDirectory = packageDirectory,
+            )
+        },
+    )
+
+    open fun drainWatch(watchDescriptor: Int): ThroneHuntEventSummary = collector.collect(
+        readPayload = { nativeDrainWatch(watchDescriptor) },
+        parse = ::parseEvents,
+        unavailable = { status -> ThroneHuntEventSummary(collection = status) },
+    )
 
     fun resetWatch(watchDescriptor: Int) {
-        runCatching { nativeResetWatch(watchDescriptor) }
+        // reset is cleanup only: a failed reset must not erase evidence already read from the fd.
+        // reset 只做清理；失败不应抹掉已经从 fd 读到的证据。
+        nativeResetWatch(watchDescriptor)
     }
 
     internal fun parseWatch(raw: String): ThroneHuntWatchSnapshot {
+        if (raw.isBlank()) {
+            return ThroneHuntWatchSnapshot(
+                collection = NativeCollectionStatus.failed(
+                    NativeCollectionOutcome.PAYLOAD_REJECTED,
+                    IllegalArgumentException("Empty watch payload"),
+                ),
+            )
+        }
+        NativePayloadContract.requireKeys(
+            raw,
+            "WATCH_INSTALLED",
+            "WATCH_DESCRIPTOR",
+            "WATCH_ERRNO",
+            "WATCH_PACKAGE_DIR",
+            "WATCH_DETAIL",
+        )
+
         var snapshot = ThroneHuntWatchSnapshot()
         raw.lineSequence()
             .map { it.trim() }
@@ -41,20 +78,26 @@ open class ThroneHuntWatchNativeBridge {
                 val key = line.substringBefore('=')
                 val value = line.substringAfter('=')
                 snapshot = when (key) {
-                    "WATCH_INSTALLED" -> snapshot.copy(watchInstalled = value.asBool())
+                    "WATCH_INSTALLED" -> snapshot.copy(
+                        watchInstalled = NativePayloadCodec.decodeFlag(value),
+                    )
+
                     "WATCH_DESCRIPTOR" -> snapshot.copy(
-                        watchDescriptor = value.toIntOrNull() ?: snapshot.watchDescriptor
+                        watchDescriptor = value.toIntOrNull() ?: snapshot.watchDescriptor,
                     )
 
                     "WATCH_ERRNO" -> snapshot.copy(
-                        errorNumber = value.toIntOrNull() ?: snapshot.errorNumber
+                        errorNumber = value.toIntOrNull() ?: snapshot.errorNumber,
                     )
 
                     "WATCH_PACKAGE_DIR" -> snapshot.copy(
-                        packageDirectory = value.decodeValue()
+                        packageDirectory = NativePayloadCodec.decodeValue(value),
                     )
 
-                    "WATCH_DETAIL" -> snapshot.copy(detail = value.decodeValue())
+                    "WATCH_DETAIL" -> snapshot.copy(
+                        detail = NativePayloadCodec.decodeValue(value),
+                    )
+
                     else -> snapshot
                 }
             }
@@ -62,6 +105,23 @@ open class ThroneHuntWatchNativeBridge {
     }
 
     internal fun parseEvents(raw: String): ThroneHuntEventSummary {
+        if (raw.isBlank()) {
+            return ThroneHuntEventSummary(
+                collection = NativeCollectionStatus.failed(
+                    NativeCollectionOutcome.PAYLOAD_REJECTED,
+                    IllegalArgumentException("Empty event payload"),
+                ),
+            )
+        }
+        NativePayloadContract.requireKeys(
+            raw,
+            "EVENT_DIRECTORY_OPEN",
+            "EVENT_DIRECTORY_ACCESS",
+            "EVENT_RAW",
+            "EVENT_INVALID",
+            "EVENT_DETAIL",
+        )
+
         var summary = ThroneHuntEventSummary()
         raw.lineSequence()
             .map { it.trim() }
@@ -71,68 +131,29 @@ open class ThroneHuntWatchNativeBridge {
                 val value = line.substringAfter('=')
                 summary = when (key) {
                     "EVENT_DIRECTORY_OPEN" -> summary.copy(
-                        directoryOpenCount = value.toIntOrNull() ?: summary.directoryOpenCount
+                        directoryOpenCount = value.toIntOrNull() ?: summary.directoryOpenCount,
                     )
 
                     "EVENT_DIRECTORY_ACCESS" -> summary.copy(
-                        directoryAccessCount = value.toIntOrNull() ?: summary.directoryAccessCount
+                        directoryAccessCount = value.toIntOrNull() ?: summary.directoryAccessCount,
                     )
 
                     "EVENT_RAW" -> summary.copy(
-                        rawEventCount = value.toIntOrNull() ?: summary.rawEventCount
+                        rawEventCount = value.toIntOrNull() ?: summary.rawEventCount,
                     )
 
                     "EVENT_INVALID" -> summary.copy(
-                        invalidCount = value.toIntOrNull() ?: summary.invalidCount
+                        invalidCount = value.toIntOrNull() ?: summary.invalidCount,
                     )
 
-                    "EVENT_DETAIL" -> summary.copy(detail = value.decodeValue())
+                    "EVENT_DETAIL" -> summary.copy(
+                        detail = NativePayloadCodec.decodeValue(value),
+                    )
+
                     else -> summary
                 }
             }
         return summary
-    }
-
-    private fun String.asBool(): Boolean {
-        return this == "1" || equals("true", ignoreCase = true)
-    }
-
-    private fun String.decodeValue(): String {
-        return buildString(length) {
-            var index = 0
-            while (index < this@decodeValue.length) {
-                val current = this@decodeValue[index]
-                if (current == '\\' && index + 1 < this@decodeValue.length) {
-                    when (this@decodeValue[index + 1]) {
-                        'n' -> {
-                            append('\n')
-                            index += 2
-                            continue
-                        }
-
-                        'r' -> {
-                            append('\r')
-                            index += 2
-                            continue
-                        }
-
-                        't' -> {
-                            append('\t')
-                            index += 2
-                            continue
-                        }
-
-                        '\\' -> {
-                            append('\\')
-                            index += 2
-                            continue
-                        }
-                    }
-                }
-                append(current)
-                index += 1
-            }
-        }
     }
 
     private external fun nativeInstallWatch(packageDirectory: String): String
@@ -140,12 +161,4 @@ open class ThroneHuntWatchNativeBridge {
     private external fun nativeDrainWatch(watchDescriptor: Int): String
 
     private external fun nativeResetWatch(watchDescriptor: Int)
-
-    companion object {
-        private val nativeLoaded = runCatching { System.loadLibrary("duckdetector") }.isSuccess
-
-        @JvmStatic
-        val isNativeLibraryLoaded: Boolean
-            get() = nativeLoaded
-    }
 }

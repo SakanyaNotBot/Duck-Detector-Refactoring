@@ -16,7 +16,13 @@
 
 package com.eltavine.duckdetector.features.nativeroot.data.service
 
+import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
+import com.eltavine.duckdetector.core.native.NativePayloadCodec
+import com.eltavine.duckdetector.core.native.NativePayloadContract
+
 data class ThroneHuntCarrierState(
+    val collection: NativeCollectionStatus = NativeCollectionStatus.Collected,
     val watchInstalled: Boolean = false,
     val watchDescriptor: Int = -1,
     val packageDirectory: String = "",
@@ -36,8 +42,18 @@ data class ThroneHuntCarrierState(
 // the isolated child can rebuild the state with no framework dependency.
 object ThroneHuntCarrierPayloadCodec {
 
+    // The codec intentionally delegates all escaping to the shared cross-process table; the watch
+    // descriptor is inherited through fork, so this is a local Binder envelope, not a native payload.
+    // 所有转义都委托到共享跨进程表；watch 描述符通过 fork 继承，所以这里是本地 Binder 信封而不是原生 payload。
+
     fun encode(state: ThroneHuntCarrierState): String {
         return buildString {
+            append("NATIVE_COLLECTION_OUTCOME=")
+            append(state.collection.outcome.name)
+            append('\n')
+            append("NATIVE_COLLECTION_DETAIL=")
+            append(NativePayloadCodec.encodeValue(state.collection.detail))
+            append('\n')
             append("WATCH_INSTALLED=")
             append(if (state.watchInstalled) '1' else '0')
             append('\n')
@@ -45,11 +61,11 @@ object ThroneHuntCarrierPayloadCodec {
             append(state.watchDescriptor)
             append('\n')
             append("WATCH_PACKAGE_DIR=")
-            append(escape(state.packageDirectory))
+            append(NativePayloadCodec.encodeValue(state.packageDirectory))
             append('\n')
             if (state.failureReason != null) {
                 append("FAILURE_REASON=")
-                append(escape(state.failureReason))
+                append(NativePayloadCodec.encodeValue(state.failureReason))
                 append('\n')
             }
             append("EVENT_DIRECTORY_OPEN=")
@@ -60,7 +76,7 @@ object ThroneHuntCarrierPayloadCodec {
             append('\n')
             state.notes.forEach { note ->
                 append("NOTE=")
-                append(escape(note))
+                append(NativePayloadCodec.encodeValue(note))
                 append('\n')
             }
         }
@@ -68,7 +84,33 @@ object ThroneHuntCarrierPayloadCodec {
 
     fun decode(raw: String): ThroneHuntCarrierState {
         if (raw.isBlank()) {
-            return ThroneHuntCarrierState()
+            return ThroneHuntCarrierState(
+                collection = NativeCollectionStatus.failed(
+                    NativeCollectionOutcome.PAYLOAD_REJECTED,
+                    IllegalArgumentException("Empty carrier payload"),
+                ),
+                failureReason = "Empty carrier payload.",
+            )
+        }
+        try {
+            NativePayloadContract.requireKeys(
+                raw,
+                "NATIVE_COLLECTION_OUTCOME",
+                "NATIVE_COLLECTION_DETAIL",
+                "WATCH_INSTALLED",
+                "WATCH_DESCRIPTOR",
+                "WATCH_PACKAGE_DIR",
+                "EVENT_DIRECTORY_OPEN",
+                "EVENT_DIRECTORY_ACCESS",
+            )
+        } catch (throwable: Throwable) {
+            return ThroneHuntCarrierState(
+                collection = NativeCollectionStatus.failed(
+                    NativeCollectionOutcome.PAYLOAD_REJECTED,
+                    throwable,
+                ),
+                failureReason = throwable.message,
+            )
         }
         var state = ThroneHuntCarrierState()
         val notes = mutableListOf<String>()
@@ -77,30 +119,50 @@ object ThroneHuntCarrierPayloadCodec {
             .filter { it.isNotEmpty() }
             .forEach { line ->
                 when {
-                    line.startsWith("NOTE=") -> notes += line.removePrefix("NOTE=").unescape()
+                    line.startsWith("NOTE=") -> {
+                        notes += NativePayloadCodec.decodeValue(line.removePrefix("NOTE="))
+                    }
 
                     line.contains('=') -> {
                         val key = line.substringBefore('=')
                         val value = line.substringAfter('=')
                         state = when (key) {
+                            "NATIVE_COLLECTION_OUTCOME" -> state.copy(
+                                collection = state.collection.copy(
+                                    outcome = runCatching {
+                                        NativeCollectionOutcome.valueOf(value)
+                                    }.getOrDefault(state.collection.outcome),
+                                ),
+                            )
+
+                            "NATIVE_COLLECTION_DETAIL" -> state.copy(
+                                collection = state.collection.copy(
+                                    detail = NativePayloadCodec.decodeValue(value),
+                                ),
+                            )
+
                             "WATCH_INSTALLED" -> state.copy(
-                                watchInstalled = value == "1" || value.equals("true", true)
+                                watchInstalled = NativePayloadCodec.decodeFlag(value),
                             )
 
                             "WATCH_DESCRIPTOR" -> state.copy(
-                                watchDescriptor = value.toIntOrNull() ?: state.watchDescriptor
+                                watchDescriptor = value.toIntOrNull() ?: state.watchDescriptor,
                             )
 
-                            "WATCH_PACKAGE_DIR" -> state.copy(packageDirectory = value.unescape())
-                            "FAILURE_REASON" -> state.copy(failureReason = value.unescape())
+                            "WATCH_PACKAGE_DIR" -> state.copy(
+                                packageDirectory = NativePayloadCodec.decodeValue(value),
+                            )
+
+                            "FAILURE_REASON" -> state.copy(
+                                failureReason = NativePayloadCodec.decodeValue(value),
+                            )
 
                             "EVENT_DIRECTORY_OPEN" -> state.copy(
-                                directoryOpenCount = value.toIntOrNull() ?: state.directoryOpenCount
+                                directoryOpenCount = value.toIntOrNull() ?: state.directoryOpenCount,
                             )
 
                             "EVENT_DIRECTORY_ACCESS" -> state.copy(
-                                directoryAccessCount = value.toIntOrNull()
-                                    ?: state.directoryAccessCount
+                                directoryAccessCount = value.toIntOrNull() ?: state.directoryAccessCount,
                             )
 
                             else -> state
@@ -109,57 +171,5 @@ object ThroneHuntCarrierPayloadCodec {
                 }
             }
         return state.copy(notes = notes)
-    }
-
-    private fun escape(value: String): String {
-        return buildString(value.length) {
-            value.forEach { ch ->
-                when (ch) {
-                    '\\' -> append("\\\\")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> append(ch)
-                }
-            }
-        }
-    }
-
-    private fun String.unescape(): String {
-        return buildString(length) {
-            var index = 0
-            while (index < this@unescape.length) {
-                val current = this@unescape[index]
-                if (current == '\\' && index + 1 < this@unescape.length) {
-                    when (this@unescape[index + 1]) {
-                        'n' -> {
-                            append('\n')
-                            index += 2
-                            continue
-                        }
-
-                        'r' -> {
-                            append('\r')
-                            index += 2
-                            continue
-                        }
-
-                        't' -> {
-                            append('\t')
-                            index += 2
-                            continue
-                        }
-
-                        '\\' -> {
-                            append('\\')
-                            index += 2
-                            continue
-                        }
-                    }
-                }
-                append(current)
-                index += 1
-            }
-        }
     }
 }

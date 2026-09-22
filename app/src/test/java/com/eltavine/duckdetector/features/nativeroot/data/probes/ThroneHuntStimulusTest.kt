@@ -17,60 +17,50 @@
 package com.eltavine.duckdetector.features.nativeroot.data.probes
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThroneHuntStimulusTest {
 
-    @Test
-    fun `every mark differs from the stored value`() {
-        val encountered = listOf<Set<String>?>(
-            null,
-            emptySet(),
-            ThroneHuntStimulus.MARK_A,
-            ThroneHuntStimulus.MARK_B,
-            setOf("application/some-other-group"),
-        )
+    private val stimulus = ThroneHuntStimulus()
 
-        encountered.forEach { current ->
-            val next = ThroneHuntStimulus.nextMark(current)
-            assertTrue("nextMark must produce a non-empty set", next.isNotEmpty())
-            assertNotEquals(
-                "an unchanged mime set is short-circuited by PackageManagerService",
-                current,
-                next,
-            )
-        }
+    @Test
+    fun `mark always differs and never contains a slash`() {
+        assertFalse(stimulus.MARK_A.contains('/'))
+        assertFalse(stimulus.MARK_B.contains('/'))
+        assertFalse(stimulus.isFrameworkValidMime(stimulus.MARK_A))
+        assertFalse(stimulus.isFrameworkValidMime(stimulus.MARK_B))
     }
 
     @Test
-    fun `mark flips between the two known values`() {
-        assertEquals(ThroneHuntStimulus.MARK_B, ThroneHuntStimulus.nextMark(ThroneHuntStimulus.MARK_A))
-        assertEquals(ThroneHuntStimulus.MARK_A, ThroneHuntStimulus.nextMark(ThroneHuntStimulus.MARK_B))
+    fun `valid mime values are preserved while only the sentinel flips`() {
+        val current = listOf("application/vnd.duckdetector", stimulus.MARK_A)
+        val next = stimulus.nextMark(current)
+
+        assertEquals(listOf("application/vnd.duckdetector", stimulus.MARK_B), next)
+        assertTrue(next.contains("application/vnd.duckdetector"))
+        assertFalse(next.contains(stimulus.MARK_A))
     }
 
     @Test
     fun `unset group still produces a real change`() {
-        assertEquals(ThroneHuntStimulus.MARK_A, ThroneHuntStimulus.nextMark(null))
-        assertEquals(ThroneHuntStimulus.MARK_A, ThroneHuntStimulus.nextMark(emptySet()))
+        assertEquals(listOf(stimulus.MARK_A), stimulus.nextMark(null))
+        assertEquals(listOf(stimulus.MARK_A), stimulus.nextMark(emptyList()))
     }
 
-    // Regression guard. When the value came from a counter held in this process, every cold start
-    // restarted at the same phase, so each session's first round resubmitted the value the previous
-    // session ended on and produced a silent false negative instead of a rewrite.
     @Test
     fun `the choice depends only on the stored value, never on call count`() {
         repeat(4) {
-            assertEquals(ThroneHuntStimulus.MARK_A, ThroneHuntStimulus.nextMark(ThroneHuntStimulus.MARK_B))
+            assertEquals(listOf(stimulus.MARK_A), stimulus.nextMark(listOf(stimulus.MARK_B)))
         }
         repeat(4) {
-            assertEquals(ThroneHuntStimulus.MARK_B, ThroneHuntStimulus.nextMark(ThroneHuntStimulus.MARK_A))
+            assertEquals(listOf(stimulus.MARK_B), stimulus.nextMark(listOf(stimulus.MARK_A)))
         }
     }
 
     @Test
-    fun `the observation window outlasts the settings write delay`() {
+    fun `observation window outlasts the settings write delay`() {
         assertTrue(
             ThroneHuntStimulus.SETTINGS_WRITE_WINDOW_MS > ThroneHuntStimulus.SETTINGS_WRITE_DELAY_MS,
         )

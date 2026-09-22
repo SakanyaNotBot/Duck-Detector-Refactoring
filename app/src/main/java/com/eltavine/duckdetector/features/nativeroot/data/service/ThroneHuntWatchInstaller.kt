@@ -30,12 +30,8 @@ object ThroneHuntWatchInstaller {
     private var preloadedState: String? = null
 
     fun install(appInfo: ApplicationInfo, bridge: ThroneHuntWatchNativeBridge = ThroneHuntWatchNativeBridge()): ThroneHuntCarrierState {
-        if (!ThroneHuntWatchNativeBridge.isNativeLibraryLoaded) {
-            return ThroneHuntCarrierState(
-                failureReason = "duckdetector native library unavailable from throne hunt preload.",
-            )
-        }
-
+        // The installer owns only the app_zygote/child boundary; it never owns native evidence.
+        // 安装器只负责 app_zygote/child 边界，绝不拥有原生证据。
         val sourceDir = appInfo.sourceDir
         if (sourceDir.isNullOrBlank()) {
             return ThroneHuntCarrierState(
@@ -54,7 +50,14 @@ object ThroneHuntWatchInstaller {
         }
 
         val watch = bridge.installWatch(packageDirectory)
+        if (!watch.collection.isTrustworthy) {
+            return ThroneHuntCarrierState(
+                collection = watch.collection,
+                failureReason = watch.collection.explain("Throne hunt watch collection failed"),
+            )
+        }
         return ThroneHuntCarrierState(
+            collection = watch.collection,
             watchInstalled = watch.watchInstalled,
             watchDescriptor = watch.watchDescriptor,
             packageDirectory = watch.packageDirectory,
