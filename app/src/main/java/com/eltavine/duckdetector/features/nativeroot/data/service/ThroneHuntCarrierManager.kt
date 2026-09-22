@@ -36,6 +36,15 @@ open class ThroneHuntCarrierManager(
     private val serviceClass: Class<out Service> = ThroneHuntCarrierService::class.java,
 ) {
 
+    // The connection is held for the whole oracle round. Rebinding between setup and drain would
+    // destroy/recreate an isolated process around a 13 s observation window and re-arm startup
+    // noise exactly where the verdict has to be measured.
+    // 连接在整轮 oracle 内保持存活；在 setup 和 drain 之间反复 bind/unbind 会在 13 秒
+    // 观察窗口边缘销毁并重建 isolated 进程，把启动噪声重新引入本应只测量 verdict 的窗口。
+    private var activeContext: Context? = null
+    private var activeConnection: ServiceConnection? = null
+    private var activeProxy: ThroneHuntCarrierProxy? = null
+
     // Setup call. Safe to repeat: it never reads the event stream.
     open suspend fun collectSnapshot(): ThroneHuntCarrierState {
         return performRemoteCollection(
@@ -62,15 +71,17 @@ open class ThroneHuntCarrierManager(
             "Throne hunt carrier service unavailable.",
         )
         return withTimeoutOrNull(DETECTION_TIMEOUT_MS) {
-            performRemoteCall(
-                context = appContext,
-                onConnected = onConnected,
-                onNullBinder = {
-                    carrierFailureState("Throne hunt carrier service returned a null binder.")
-                },
-                onError = { error -> carrierFailureState(error) },
-            )
-        } ?: carrierFailureState("Throne hunt carrier probe timed out.")
+            val proxy = synchronized(this) {
+                activeProxy
+            } ?: connect(appContext) ?: return@withTimeoutOrNull null
+
+            try {
+                onConnected(proxy)
+            } catch (throwable: Throwable) {
+                close()
+                carrierFailureState(throwable.message ?: "Binder call failed.")
+            }
+        } ?: carrierFailureState("Throne hunt carrier connection or transaction timed out.")
     }
 
     private fun carrierFailureState(reason: String): ThroneHuntCarrierState {
@@ -87,77 +98,100 @@ open class ThroneHuntCarrierManager(
         )
     }
 
-    private suspend fun <T> performRemoteCall(
-        context: Context,
-        onConnected: (ThroneHuntCarrierProxy) -> T,
-        onNullBinder: () -> T,
-        onError: (String) -> T,
-    ): T = suspendCancellableCoroutine { continuation ->
-        val bindAttemptFinished = AtomicBoolean(false)
-        val cleanupRequested = AtomicBoolean(false)
-        val unbindAttempted = AtomicBoolean(false)
-        val completionAttempted = AtomicBoolean(false)
-        lateinit var connection: ServiceConnection
+    private suspend fun connect(context: Context): ThroneHuntCarrierProxy? =
+        suspendCancellableCoroutine { continuation ->
+            val bindAttemptFinished = AtomicBoolean(false)
+            val cleanupRequested = AtomicBoolean(false)
+            val unbindAttempted = AtomicBoolean(false)
+            val completionAttempted = AtomicBoolean(false)
+            lateinit var connection: ServiceConnection
 
-        fun requestCleanup() {
-            cleanupRequested.set(true)
-            if (bindAttemptFinished.get() && unbindAttempted.compareAndSet(false, true)) {
-                runCatching { context.unbindService(connection) }
-            }
-        }
-
-        fun finish(result: T) {
-            requestCleanup()
-            if (completionAttempted.compareAndSet(false, true)) {
-                continuation.resume(result)
-            }
-        }
-
-        connection = object : ServiceConnection {
-            override fun onServiceConnected(
-                name: ComponentName?,
-                service: IBinder?,
-            ) {
-                if (service == null) {
-                    finish(onNullBinder())
-                    return
-                }
-                try {
-                    finish(onConnected(ThroneHuntCarrierProxy(service)))
-                } catch (throwable: Throwable) {
-                    finish(onError(throwable.message ?: "Binder call failed."))
+            fun requestCleanup() {
+                cleanupRequested.set(true)
+                if (bindAttemptFinished.get() && unbindAttempted.compareAndSet(false, true)) {
+                    runCatching { context.unbindService(connection) }
                 }
             }
 
-            override fun onNullBinding(name: ComponentName?) {
-                finish(onNullBinder())
+            fun finish(proxy: ThroneHuntCarrierProxy?) {
+                if (proxy == null) {
+                    requestCleanup()
+                }
+                if (completionAttempted.compareAndSet(false, true)) {
+                    continuation.resume(proxy)
+                }
             }
 
-            override fun onServiceDisconnected(name: ComponentName?) = Unit
+            connection = object : ServiceConnection {
+                override fun onServiceConnected(
+                    name: ComponentName?,
+                    service: IBinder?,
+                ) {
+                    if (service == null) {
+                        finish(null)
+                        return
+                    }
+                    try {
+                        val proxy = ThroneHuntCarrierProxy(service)
+                        synchronized(this@ThroneHuntCarrierManager) {
+                            activeContext = context
+                            activeConnection = connection
+                            activeProxy = proxy
+                        }
+                        finish(proxy)
+                    } catch (throwable: Throwable) {
+                        finish(null)
+                    }
+                }
+
+                override fun onNullBinding(name: ComponentName?) {
+                    finish(null)
+                }
+
+                override fun onServiceDisconnected(name: ComponentName?) {
+                    synchronized(this@ThroneHuntCarrierManager) {
+                        activeProxy = null
+                        activeConnection = null
+                        activeContext = null
+                    }
+                }
+            }
+
+            continuation.invokeOnCancellation {
+                requestCleanup()
+            }
+            if (!continuation.isActive) {
+                return@suspendCancellableCoroutine
+            }
+
+            val intent = Intent(context, serviceClass)
+            // onServiceConnected may make a blocking Binder call, so it must not run on the main
+            // thread's executor - that previously froze the UI and could trigger an ANR.
+            val bound = runCatching {
+                context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
+            }.getOrDefault(false)
+
+            bindAttemptFinished.set(true)
+            if (cleanupRequested.get()) {
+                requestCleanup()
+            }
+
+            if (!bound) {
+                finish(null)
+            }
         }
 
-        continuation.invokeOnCancellation {
-            requestCleanup()
+    fun close() {
+        val cleanup = synchronized(this) {
+            val triple = Triple(activeContext, activeConnection, activeProxy)
+            activeContext = null
+            activeConnection = null
+            activeProxy = null
+            triple
         }
-        if (!continuation.isActive) {
-            return@suspendCancellableCoroutine
-        }
-
-        val intent = Intent(context, serviceClass)
-        // onServiceConnected makes a blocking Binder call, so it must not run on the main
-        // thread's executor - that previously froze the UI and could trigger an ANR.
-        val bound = runCatching {
-            context.bindService(intent, Context.BIND_AUTO_CREATE, REMOTE_CALLBACK_EXECUTOR, connection)
-        }.getOrDefault(false)
-
-        bindAttemptFinished.set(true)
-        if (cleanupRequested.get()) {
-            requestCleanup()
-        }
-
-        if (!bound) {
-            finish(onError("The dedicated throne hunt carrier process could not be bound."))
-            return@suspendCancellableCoroutine
+        val (context, connection, _) = cleanup
+        if (context != null && connection != null) {
+            runCatching { context.unbindService(connection) }
         }
     }
 
