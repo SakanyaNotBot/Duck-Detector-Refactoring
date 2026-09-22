@@ -61,7 +61,7 @@ limitations under the License.
     <string name="about_clipboard_build_hash_line">مُعرف البناء: %1$s</string>
     <string name="about_copy_toast">تم نسخ معلومات البناء</string>
     <string name="update_settings_label">التحقق من التحديثات</string>
-    <string name="update_status_idle">يتم فحص GitHub Master Nightly بعد التشغيل البارد؛ اضغط للفحص الآن</string>
+    <string name="update_status_idle">يتم فحص GitHub Main Nightly بعد التشغيل البارد؛ اضغط للفحص الآن</string>
     <string name="update_status_checking">جارٍ التحقق من GitHub…</string>
     <string name="update_status_current">لديك أحدث إصدار Nightly</string>
     <string name="update_status_available">يتوفر إصدار Nightly أحدث؛ اضغط للتفاصيل</string>
@@ -184,6 +184,8 @@ limitations under the License.
     <string name="startup_package_continue_anyway">المتابعة على أي حال</string>
     <string name="startup_package_ack_headline">تم الإقرار بتقييد رؤية PackageManager.</string>
     <string name="startup_package_ack_detail">عدد الحزم المرئية الحالي: %1$d. قد تكون نتائج التطبيقات الخطرة أكثر تحفظًا ضمن هذا النطاق.</string>
+    <string name="startup_package_unavailable_headline">تعذّر التحقق من قائمة PackageManager.</string>
+    <string name="startup_package_unavailable_detail">فشل استعلام القائمة أو لم يتضمن هذا التطبيق. ستُعامل نتائج عدم العثور المعتمدة على الحزم على أنها غير حاسمة.</string>
     <string name="startup_package_low_inventory_headline">يبدو PackageManager كاملًا لكن الفهرس المرئي صغير بشكل غير معتاد.</string>
     <string name="startup_package_low_inventory_detail">عدد الحزم المرئية الحالي: %1$d. ستستمر عملية البدء، لكن التطبيقات الخطرة ستراجع هذا الانخفاض في الفهرس كدليل محتمل على التصفية.</string>
     <string name="startup_package_ready_headline">يبدو فهرس PackageManager كاملًا.</string>

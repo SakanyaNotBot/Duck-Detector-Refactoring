@@ -17,7 +17,7 @@ name: Build APK And Push To Telegram
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -39,87 +39,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Read Android toolchain settings
+      - name: Set up Android build toolchain
         id: toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          from pathlib import Path
-
-          properties = {}
-          for raw_line in Path("gradle.properties").read_text(encoding="utf-8").splitlines():
-              line = raw_line.strip()
-              if not line or line.startswith("#") or "=" not in line:
-                  continue
-              key, value = line.split("=", 1)
-              properties[key.strip()] = value.strip()
-
-          mapping = {
-              "build_tools": "duckdetector.android.buildTools",
-              "cmake": "duckdetector.android.cmake",
-              "compile_sdk": "duckdetector.android.compileSdk",
-              "compile_sdk_minor": "duckdetector.android.compileSdkMinor",
-              "ndk": "duckdetector.android.ndk",
-          }
-
-          for output_name, property_name in mapping.items():
-              value = properties.get(property_name)
-              if not value:
-                  raise SystemExit(f"Missing required Gradle property: {property_name}")
-              print(f"{output_name}={value}")
-          PY
-
-      - name: Make Gradle wrapper executable
-        shell: bash
-        run: chmod +x gradlew
-
-      - name: Set up Java 17
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: ./.github/actions/setup-android-build
         with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/master' }}
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
-        with:
-          packages: platform-tools
-
-      - name: Install Android SDK packages
-        shell: bash
-        env:
-          BUILD_TOOLS: ${{ steps.toolchain.outputs.build_tools }}
-          CMAKE: ${{ steps.toolchain.outputs.cmake }}
-          COMPILE_SDK: ${{ steps.toolchain.outputs.compile_sdk }}
-          COMPILE_SDK_MINOR: ${{ steps.toolchain.outputs.compile_sdk_minor }}
-          NDK: ${{ steps.toolchain.outputs.ndk }}
-        run: |
-          set -euo pipefail
-
-          packages=(
-            "platform-tools"
-            "platforms;android-${COMPILE_SDK}.${COMPILE_SDK_MINOR}"
-            "build-tools;${BUILD_TOOLS}"
-            "cmake;${CMAKE}"
-            "ndk;${NDK}"
-          )
-
-          for attempt in 1 2 3; do
-            if sdkmanager --install "${packages[@]}"; then
-              break
-            fi
-            if [ "${attempt}" -eq 3 ]; then
-              echo "Android SDK package installation failed after ${attempt} attempts." >&2
-              exit 1
-            fi
-            sleep $((attempt * 5))
-          done
+          cache-read-only: ${{ github.ref_name != github.event.repository.default_branch }}
 
       - name: Validate credentials and prepare release keystore
         id: keystore
@@ -234,6 +158,7 @@ jobs:
             --stacktrace \
             -Pduckdetector.buildTimeUtc="${build_time_utc}" \
             -Pduckdetector.teeCrl.refresh=true \
+            -Pduckdetector.githubContributors.refresh=true \
             :app:assembleRelease
           end_time=$(date +%s)
 
@@ -370,7 +295,7 @@ jobs:
                   f"Version: <b>{escape_html(metadata['version_name'])} ({escape_html(metadata['version_code'])})</b>",
                   f"APK: <b>{escape_html(metadata['apk_name'])}</b>",
                   "",
-                  f'Commit: <a href="{escape_html_attribute(commit_url)}"><code>{escape_html(git_hash)}</code></a>',
+                  f'Commit: <a href="{escape_html_attribute(commit_url)}">{escape_html(git_hash)}</a>',
                   f"<pre>{escape_html(subject)}</pre>",
                   f"Author: <b>{escape_html(commit_author)}</b>",
                   f"Branch: <b>{escape_html(git_branch)}</b>",
@@ -455,7 +380,7 @@ jobs:
         shell: bash
         env:
           APK_PATH: ${{ steps.metadata.outputs.apk_path }}
-          BUILD_TOOLS: ${{ steps.toolchain.outputs.build_tools }}
+          BUILD_TOOLS: ${{ steps.toolchain.outputs.build-tools }}
           EXPECTED_SIGNER_SHA256: ${{ steps.signing_fingerprint.outputs.sha256 }}
         run: |
           set -euo pipefail
@@ -500,7 +425,7 @@ jobs:
           retention-days: 14
 
       - name: Prepare nightly release note
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         run: |
           set -euo pipefail
@@ -514,7 +439,7 @@ jobs:
 
       - name: Snapshot previous Nightly release assets
         id: previous_nightly_assets
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -571,7 +496,7 @@ jobs:
       - name: Update nightly APK release
         id: nightly_release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
@@ -588,11 +513,12 @@ jobs:
 
       - name: Prepare Nightly update manifest
         id: update_manifest
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         env:
           APK_PATH: ${{ steps.metadata.outputs.apk_path }}
-          BUILD_BRANCH: ${{ github.ref_name }}
+          # Keep publishing the legacy value until pre-migration clients have upgraded.
+          NIGHTLY_MANIFEST_BRANCH: master
           BUILD_TIME_ISO: ${{ steps.build.outputs.build_time_iso }}
           RELEASE_ASSETS_JSON: ${{ steps.nightly_release.outputs.assets }}
           VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
@@ -671,7 +597,7 @@ jobs:
           manifest = {
               "schemaVersion": 1,
               "channel": "nightly",
-              "branch": os.environ["BUILD_BRANCH"],
+              "branch": os.environ["NIGHTLY_MANIFEST_BRANCH"],
               "versionName": os.environ["VERSION_NAME"],
               "versionCode": int(os.environ["VERSION_CODE"]),
               "commit": {
@@ -701,7 +627,7 @@ jobs:
           jq -e '
             .schemaVersion == 1 and
             .channel == "nightly" and
-            .branch == env.BUILD_BRANCH and
+            .branch == env.NIGHTLY_MANIFEST_BRANCH and
             .versionCode == (env.VERSION_CODE | tonumber) and
             .commit.sha == env.GITHUB_SHA and
             (.apk.name | test("^[^/]+\\.[Aa][Pp][Kk]$")) and
@@ -719,7 +645,7 @@ jobs:
       - name: Publish Nightly update manifest
         id: nightly_manifest_release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
@@ -735,7 +661,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify published Nightly assets
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         env:
           APK_ASSET_ID: ${{ steps.update_manifest.outputs.apk_asset_id }}
@@ -841,7 +767,7 @@ jobs:
           fi
 
       - name: Delete previous Nightly release assets
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         env:
           APK_ASSET_ID: ${{ steps.update_manifest.outputs.apk_asset_id }}
@@ -944,7 +870,7 @@ jobs:
           fi
 
       - name: Move Nightly tag to published commit
-        if: github.ref == 'refs/heads/master'
+        if: github.ref_name == github.event.repository.default_branch
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

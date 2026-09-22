@@ -595,11 +595,13 @@ class NativeRootCardModelMapper {
                     when {
                         report.ksuManagerPackagePresent -> "Present"
                         report.ksuManagerVisibilityRestricted -> "Scoped"
+                        report.ksuManagerVisibilityUnknown -> "Unavailable"
                         else -> "Clean"
                     },
                     when {
                         report.ksuManagerPackagePresent -> DetectorStatus.warning()
-                        report.ksuManagerVisibilityRestricted -> DetectorStatus.info(InfoKind.SUPPORT)
+                        report.ksuManagerVisibilityRestricted || report.ksuManagerVisibilityUnknown ->
+                            DetectorStatus.info(InfoKind.SUPPORT)
                         else -> DetectorStatus.allClear()
                     },
                 ),
@@ -607,12 +609,13 @@ class NativeRootCardModelMapper {
                     "Manager traits",
                     when {
                         report.ksuManagerPackagePresent -> "${report.ksuManagerTraitHitCount}/3"
-                        report.ksuManagerVisibilityRestricted -> "N/A"
+                        report.ksuManagerVisibilityRestricted || report.ksuManagerVisibilityUnknown -> "N/A"
                         else -> "N/A"
                     },
                     when {
                         report.ksuManagerPackagePresent -> DetectorStatus.warning()
-                        report.ksuManagerVisibilityRestricted -> DetectorStatus.info(InfoKind.SUPPORT)
+                        report.ksuManagerVisibilityRestricted || report.ksuManagerVisibilityUnknown ->
+                            DetectorStatus.info(InfoKind.SUPPORT)
                         else -> DetectorStatus.allClear()
                     },
                 ),
@@ -841,6 +844,7 @@ class NativeRootCardModelMapper {
         return !cgroupAvailable ||
                 !isolatedMountProbeAvailable ||
                 !ksuThroneHuntAvailable ||
-                ksuManagerVisibilityRestricted
+                ksuManagerVisibilityRestricted ||
+                ksuManagerVisibilityUnknown
     }
 }

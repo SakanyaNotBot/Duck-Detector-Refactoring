@@ -16,6 +16,9 @@
 
 package com.eltavine.duckdetector.features.tee.data.native
 
+import com.eltavine.duckdetector.core.native.DuckDetectorNativeLibrary
+import com.eltavine.duckdetector.core.native.NativePayloadCodec
+
 class TeeRegisterTimerNativeBridge {
 
     fun isNativeAvailable(): Boolean = nativeLoaded
@@ -44,6 +47,15 @@ class TeeRegisterTimerNativeBridge {
         }
         return runCatching {
             nativeBindCurrentThreadToCpu0()
+        }.getOrDefault(false)
+    }
+
+    fun restoreCurrentThreadAffinity(): Boolean {
+        if (!nativeLoaded) {
+            return false
+        }
+        return runCatching {
+            nativeRestoreCurrentThreadAffinity()
         }.getOrDefault(false)
     }
 
@@ -80,14 +92,15 @@ class TeeRegisterTimerNativeBridge {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() && it.contains('=') }
                 .forEach { line ->
-                    put(line.substringBefore('='), line.substringAfter('='))
+                    put(
+                        line.substringBefore('='),
+                        NativePayloadCodec.decodeValue(line.substringAfter('=')),
+                    )
                 }
         }
     }
 
-    private fun String?.asBool(): Boolean {
-        return this == "1" || this.equals("true", ignoreCase = true)
-    }
+    private fun String?.asBool(): Boolean = NativePayloadCodec.decodeFlag(this)
 
     private external fun nativeIsRegisterTimerAvailable(): Boolean
 
@@ -95,9 +108,12 @@ class TeeRegisterTimerNativeBridge {
 
     private external fun nativeBindCurrentThreadToCpu0(): Boolean
 
+    private external fun nativeRestoreCurrentThreadAffinity(): Boolean
+
     private external fun nativeSelectPreferredTimer(requestCpu0Affinity: Boolean): String
 
     companion object {
-        private val nativeLoaded = runCatching { System.loadLibrary("duckdetector") }.isSuccess
+        private val nativeLoaded: Boolean
+            get() = DuckDetectorNativeLibrary.isLoaded
     }
 }

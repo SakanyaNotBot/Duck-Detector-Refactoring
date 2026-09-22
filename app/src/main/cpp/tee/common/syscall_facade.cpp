@@ -18,6 +18,7 @@
 
 #include <cerrno>
 #include <sched.h>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
@@ -48,6 +49,13 @@ namespace ducktee::common {
 #if defined(__aarch64__)
         extern "C" unsigned long long tee_arm64_read_cntvct();
         extern "C" unsigned long long tee_arm64_read_cntfrq();
+
+        struct SavedThreadAffinity {
+            cpu_set_t mask{};
+            unsigned int bind_depth = 0;
+        };
+
+        thread_local SavedThreadAffinity g_saved_thread_affinity;
 #endif
 
         SyscallCallResult make_unavailable_result() {
@@ -111,24 +119,65 @@ namespace ducktee::common {
             return true;
         }
 
+        constexpr std::uint64_t kNanosPerSecond = 1'000'000'000ULL;
+
+        /**
+         * CNTFRQ_EL0.ClockFreq is bits [31:0] and the remaining bits are RES0, so the effective
+         * frequency in Hz never exceeds this. Arm ARM D12.1.2 also notes the register is UNKNOWN at
+         * reset and is written by firmware at the highest Exception level rather than populated by
+         * hardware, so its value is not trustworthy on its own and is bounded here before use.
+         */
+        constexpr std::uint64_t kCntfrqClockFreqMask = 0xffff'ffffULL;
+
+        /** Largest whole-second count that still leaves room for a sub-second remainder in 64 bits. */
+        constexpr std::uint64_t kMaxConvertibleSeconds =
+                (UINT64_MAX - (kNanosPerSecond - 1ULL)) / kNanosPerSecond;
+
+        std::uint64_t arm64_effective_frequency_hz() {
+            return tee_arm64_read_cntfrq() & kCntfrqClockFreqMask;
+        }
+
         bool arm64_cntvct_now(std::uint64_t *out_ns) {
             if (out_ns == nullptr) {
                 return false;
             }
-            const auto frequency = tee_arm64_read_cntfrq();
+            const std::uint64_t frequency = arm64_effective_frequency_hz();
             std::uint64_t counter = 0;
             if (frequency == 0ULL || !arm64_cntvct_raw(&counter)) {
                 return false;
             }
-            *out_ns = static_cast<std::uint64_t>((counter * 1'000'000'000ULL) / frequency);
+
+            // Whole seconds are converted separately because counter * kNanosPerSecond overflows 64
+            // bits once the counter passes 2^64/1e9. Arm ARM D12.1.2 fixes the effective frequency at
+            // 1GHz from Armv8.6, where that is roughly 18 seconds of counter uptime, and a typical
+            // Armv8.0-v8.5 counter in the 1-50MHz range reaches it within minutes. Wrapping there
+            // produced absolute timestamps that were nonsense and deltas that broke whenever a
+            // measurement straddled the wrap. After the split the remainder stays below the
+            // frequency, which the mask above bounds to 32 bits, so that multiplication is in range.
+            const std::uint64_t seconds = counter / frequency;
+            const std::uint64_t remainder = counter % frequency;
+            if (seconds > kMaxConvertibleSeconds) {
+                return false;
+            }
+            *out_ns = seconds * kNanosPerSecond + (remainder * kNanosPerSecond) / frequency;
             return true;
         }
 
         bool arm64_cntvct_self_check(std::string *failure_reason) {
-            const auto frequency = tee_arm64_read_cntfrq();
+            const std::uint64_t frequency = arm64_effective_frequency_hz();
             if (frequency == 0ULL) {
                 if (failure_reason != nullptr) {
                     *failure_reason = "cntfrq was zero";
+                }
+                return false;
+            }
+
+            // Selection must agree with use: the nanosecond conversion has its own range guard, so a
+            // counter this probe cannot convert must not be chosen as the timer source.
+            std::uint64_t convertible_ns = 0;
+            if (!arm64_cntvct_now(&convertible_ns)) {
+                if (failure_reason != nullptr) {
+                    *failure_reason = "cntvct could not be converted to nanoseconds";
                 }
                 return false;
             }
@@ -355,10 +404,47 @@ namespace ducktee::common {
 #else
         const auto tid = getpid();
 #endif
-        cpu_set_t mask;
-        CPU_ZERO(&mask);
-        CPU_SET(0, &mask);
-        return sched_setaffinity(tid, sizeof(mask), &mask) == 0;
+        cpu_set_t cpu0_mask;
+        CPU_ZERO(&cpu0_mask);
+        CPU_SET(0, &cpu0_mask);
+
+        if (g_saved_thread_affinity.bind_depth == 0 &&
+            sched_getaffinity(tid, sizeof(g_saved_thread_affinity.mask),
+                              &g_saved_thread_affinity.mask) != 0) {
+            return false;
+        }
+        if (sched_setaffinity(tid, sizeof(cpu0_mask), &cpu0_mask) != 0) {
+            return false;
+        }
+        ++g_saved_thread_affinity.bind_depth;
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    bool restore_current_thread_affinity() {
+#if defined(__aarch64__)
+        if (g_saved_thread_affinity.bind_depth == 0) {
+            return false;
+        }
+        if (g_saved_thread_affinity.bind_depth > 1) {
+            --g_saved_thread_affinity.bind_depth;
+            return true;
+        }
+
+#if defined(__NR_gettid)
+        const auto tid = static_cast<pid_t>(syscall(__NR_gettid));
+#else
+        const auto tid = getpid();
+#endif
+        if (sched_setaffinity(tid, sizeof(g_saved_thread_affinity.mask),
+                              &g_saved_thread_affinity.mask) != 0) {
+            return false;
+        }
+        g_saved_thread_affinity.bind_depth = 0;
+        CPU_ZERO(&g_saved_thread_affinity.mask);
+        return true;
 #else
         return false;
 #endif
@@ -386,10 +472,6 @@ namespace ducktee::common {
         if (arm64_cntvct_self_check(&failure_reason)) {
             out->kind = LocalTimerKind::Arm64Cntvct;
             out->source_label = "arm64_cntvct";
-            if (affinity_attempted && !affinity_ok) {
-                affinity_ok = bind_current_thread_to_cpu0();
-                out->affinity_status = affinity_ok ? "bound_cpu0" : "bind_failed";
-            }
             return true;
         }
 

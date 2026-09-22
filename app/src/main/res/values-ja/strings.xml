@@ -61,7 +61,7 @@ limitations under the License.
     <string name="about_clipboard_build_hash_line">ビルドハッシュ: %1$s</string>
     <string name="about_copy_toast">ビルド情報をコピーしました</string>
     <string name="update_settings_label">更新を確認</string>
-    <string name="update_status_idle">コールドスタート後に GitHub Master Nightly を確認します。タップして今すぐ確認</string>
+    <string name="update_status_idle">コールドスタート後に GitHub Main Nightly を確認します。タップして今すぐ確認</string>
     <string name="update_status_checking">GitHub を確認しています…</string>
     <string name="update_status_current">最新の Nightly ビルドです</string>
     <string name="update_status_available">新しい Nightly ビルドがあります。タップして詳細を表示</string>
@@ -177,6 +177,8 @@ limitations under the License.
     <string name="startup_package_continue_anyway">それでも続行</string>
     <string name="startup_package_ack_headline">制限された PackageManager 可視性を確認しました。</string>
     <string name="startup_package_ack_detail">現在表示されているパッケージ数: %1$d 件。この一覧範囲では Dangerous Apps の結果がより保守的になる可能性があります。</string>
+    <string name="startup_package_unavailable_headline">PackageManager の一覧を検証できませんでした。</string>
+    <string name="startup_package_unavailable_detail">一覧の問い合わせに失敗したか、このアプリが含まれていませんでした。パッケージが見つからないという結果は判断不能として扱われます。</string>
     <string name="startup_package_low_inventory_headline">PackageManager は完全に見えますが、表示される一覧数が異常に少なめです。</string>
     <string name="startup_package_low_inventory_detail">現在表示されているパッケージ数: %1$d 件。起動は続行しますが、Dangerous Apps はこの少数一覧状態を潜在的なフィルタリング証拠として確認します。</string>
     <string name="startup_package_ready_headline">PackageManager の一覧は完全に見えます。</string>
