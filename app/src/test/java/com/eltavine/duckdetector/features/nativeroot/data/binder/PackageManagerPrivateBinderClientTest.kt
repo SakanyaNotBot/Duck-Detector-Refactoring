@@ -26,14 +26,15 @@ class PackageManagerPrivateBinderClientTest {
         val client = PackageManagerPrivateBinderClient(
             transport = FakeTransport(ThroneHuntFakeService()),
             sdkProvider = { android.os.Build.VERSION_CODES.R },
+            methodGateway = ReflectionMethodGateway(),
         )
 
         val get = client.getMimeGroup("com.example", "group")
         val set = client.setMimeGroup("com.example", "group", listOf("a"))
 
-        assertEquals(PackageManagerPrivateCallStatus.SUCCESS, get.status)
+        assertEquals(get.detail, PackageManagerPrivateCallStatus.SUCCESS, get.status)
         assertEquals(listOf("a", "b"), get.value)
-        assertEquals(PackageManagerPrivateCallStatus.SUCCESS, set.status)
+        assertEquals(set.detail, PackageManagerPrivateCallStatus.SUCCESS, set.status)
     }
 
     @Test
@@ -41,6 +42,7 @@ class PackageManagerPrivateBinderClientTest {
         val client = PackageManagerPrivateBinderClient(
             transport = FakeTransport(null),
             sdkProvider = { android.os.Build.VERSION_CODES.R },
+            methodGateway = ReflectionMethodGateway(),
         )
 
         val result = client.getMimeGroup("com.example", "group")
@@ -56,6 +58,7 @@ class PackageManagerPrivateBinderClientTest {
                 hiddenApiUnavailable = true,
             ),
             sdkProvider = { android.os.Build.VERSION_CODES.R },
+            methodGateway = ReflectionMethodGateway(),
         )
 
         val result = client.setMimeGroup("com.example", "group", listOf("a"))
@@ -68,11 +71,12 @@ class PackageManagerPrivateBinderClientTest {
         val client = PackageManagerPrivateBinderClient(
             transport = FakeTransport(object {}),
             sdkProvider = { android.os.Build.VERSION_CODES.R },
+            methodGateway = ReflectionMethodGateway(),
         )
 
         val result = client.getMimeGroup("com.example", "group")
 
-        assertEquals(PackageManagerPrivateCallStatus.METHOD_UNAVAILABLE, result.status)
+        assertEquals(result.detail, PackageManagerPrivateCallStatus.METHOD_UNAVAILABLE, result.status)
     }
 
     @Test
@@ -80,6 +84,7 @@ class PackageManagerPrivateBinderClientTest {
         val client = PackageManagerPrivateBinderClient(
             transport = FakeTransport(ThroneHuntFakeService(throwOnCall = true)),
             sdkProvider = { android.os.Build.VERSION_CODES.R },
+            methodGateway = ReflectionMethodGateway(),
         )
 
         val result = client.setMimeGroup("com.example", "group", listOf("a"))
@@ -111,6 +116,26 @@ class PackageManagerPrivateBinderClientTest {
 
         fun setMimeGroup(packageName: String, group: String, mimeTypes: List<String>?) {
             if (throwOnCall) error("boom")
+        }
+    }
+
+    private class ReflectionMethodGateway :
+        PackageManagerPrivateBinderClient.MethodGateway {
+
+        override fun invoke(
+            targetClass: Class<*>,
+            target: Any?,
+            methodName: String,
+            vararg arguments: Any?,
+        ): Any? {
+            val method = targetClass.methods.firstOrNull {
+                it.name == methodName && it.parameterTypes.size == arguments.size
+            } ?: throw NoSuchMethodException(methodName)
+            return method.invoke(target, *arguments)
+        }
+
+        override fun declaredMethods(targetClass: Class<*>): List<java.lang.reflect.Executable> {
+            return targetClass.methods.toList()
         }
     }
 }

@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.IBinder
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Executable
 
 enum class PackageManagerPrivateCallStatus {
     SUCCESS,
@@ -49,20 +50,29 @@ data class PackageManagerPrivateCallResult<T>(
 class PackageManagerPrivateBinderClient internal constructor(
     private val transport: Transport = Transport.Default,
     private val sdkProvider: () -> Int = { Build.VERSION.SDK_INT },
+    private val methodGateway: MethodGateway = MethodGateway.HiddenApiBypass,
 ) {
 
     fun getMimeGroup(packageName: String, group: String): PackageManagerPrivateCallResult<List<String>?> {
         return execute("getMimeGroup") { service ->
-            val method = service.javaClass.methods.firstOrNull {
-                it.name == "getMimeGroup" && it.parameterTypes.size == 2
-            } ?: return@execute PackageManagerPrivateCallResult(
-                status = PackageManagerPrivateCallStatus.METHOD_UNAVAILABLE,
-                detail = "IPackageManager.getMimeGroup(String, String) is unavailable.",
-            )
-            val value = method.invoke(service, packageName, group) as? List<String>?
+            val value = try {
+                methodGateway.invoke(
+                    service.javaClass,
+                    service,
+                    "getMimeGroup",
+                    packageName,
+                    group,
+                )
+            } catch (throwable: NoSuchMethodException) {
+                return@execute methodUnavailable(
+                    operation = "getMimeGroup",
+                    service = service,
+                    method = "getMimeGroup",
+                )
+            }
             PackageManagerPrivateCallResult(
                 status = PackageManagerPrivateCallStatus.SUCCESS,
-                value = value,
+                value = value as? List<String>?,
             )
         }
     }
@@ -73,17 +83,76 @@ class PackageManagerPrivateBinderClient internal constructor(
         mimeTypes: List<String>?,
     ): PackageManagerPrivateCallResult<Unit> {
         return execute("setMimeGroup") { service ->
-            val method = service.javaClass.methods.firstOrNull {
-                it.name == "setMimeGroup" && it.parameterTypes.size == 3
-            } ?: return@execute PackageManagerPrivateCallResult(
-                status = PackageManagerPrivateCallStatus.METHOD_UNAVAILABLE,
-                detail = "IPackageManager.setMimeGroup(String, String, List) is unavailable.",
-            )
-            method.invoke(service, packageName, group, mimeTypes)
+            try {
+                methodGateway.invoke(
+                    service.javaClass,
+                    service,
+                    "setMimeGroup",
+                    packageName,
+                    group,
+                    mimeTypes,
+                )
+            } catch (throwable: NoSuchMethodException) {
+                return@execute methodUnavailable(
+                    operation = "setMimeGroup",
+                    service = service,
+                    method = "setMimeGroup",
+                )
+            }
             PackageManagerPrivateCallResult(
                 status = PackageManagerPrivateCallStatus.SUCCESS,
                 value = Unit,
             )
+        }
+    }
+
+    private fun <T> methodUnavailable(
+        operation: String,
+        service: Any,
+        method: String,
+    ): PackageManagerPrivateCallResult<T> {
+        // Hidden API filtering can make a method absent from javaClass.methods while generated
+        // Stub$Proxy still carries it. Reporting the service class and same-named declarations
+        // distinguishes a vendor signature change from ordinary reflection filtering.
+        // Hidden API 过滤会让 javaClass.methods 看不到方法，但生成的 Stub$Proxy 仍携带它。
+        // 输出 service 类和同名声明可以区分厂商签名变化与普通反射过滤。
+        val candidates = methodGateway.declaredMethods(service.javaClass)
+            .filter { it.name == method }
+            .joinToString { executable ->
+                "${executable.name}(${executable.parameterTypes.joinToString { it.simpleName }})"
+            }
+        return unavailable(
+            PackageManagerPrivateCallStatus.METHOD_UNAVAILABLE,
+            "$operation is unavailable on ${service.javaClass.name}; " +
+                "same-named methods: ${candidates.ifBlank { "(none)" }}.",
+        )
+    }
+
+    internal interface MethodGateway {
+        fun invoke(
+            targetClass: Class<*>,
+            target: Any?,
+            methodName: String,
+            vararg arguments: Any?,
+        ): Any?
+
+        fun declaredMethods(targetClass: Class<*>): List<Executable>
+
+        object HiddenApiBypass : MethodGateway {
+            override fun invoke(
+                targetClass: Class<*>,
+                target: Any?,
+                methodName: String,
+                vararg arguments: Any?,
+            ): Any? = org.lsposed.hiddenapibypass.HiddenApiBypass.invoke(
+                targetClass,
+                target,
+                methodName,
+                *arguments,
+            )
+
+            override fun declaredMethods(targetClass: Class<*>): List<Executable> =
+                org.lsposed.hiddenapibypass.HiddenApiBypass.getDeclaredMethods(targetClass)
         }
     }
 
