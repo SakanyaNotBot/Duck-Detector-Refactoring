@@ -73,6 +73,8 @@ class ThroneHuntCarrierPayloadCodecTest {
             watchDescriptor = 4,
             directoryOpenCount = 3,
             directoryAccessCount = 2,
+            rawEventCount = 7,
+            invalidEventCount = 1,
         )
 
         val decoded = ThroneHuntCarrierPayloadCodec.decode(
@@ -82,6 +84,8 @@ class ThroneHuntCarrierPayloadCodecTest {
         assertTrue(decoded.watchInstalled)
         assertEquals(3, decoded.directoryOpenCount)
         assertEquals(2, decoded.directoryAccessCount)
+        assertEquals(7, decoded.rawEventCount)
+        assertEquals(1, decoded.invalidEventCount)
         assertFalse(decoded.watchDenied)
     }
 

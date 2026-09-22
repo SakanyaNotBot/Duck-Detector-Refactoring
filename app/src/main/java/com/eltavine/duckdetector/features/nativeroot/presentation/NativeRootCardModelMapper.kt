@@ -393,6 +393,11 @@ class NativeRootCardModelMapper {
                     value = result.summary,
                     status = methodStatus(result),
                     detail = result.detail,
+                    hiddenCopyText = if (result.label == "ksuThroneHunt") {
+                        buildThroneHuntDiagnostics(report)
+                    } else {
+                        null
+                    },
                     detailMonospace = true,
                 )
             }
@@ -420,6 +425,8 @@ class NativeRootCardModelMapper {
                     "Proc view pids",
                     "Manager package",
                     "Manager traits",
+                    "Throne hunt",
+                    "Throne hunt counters",
                     "Cgroup paths",
                     "Cgroup visible",
                     "Cgroup proc",
@@ -456,6 +463,8 @@ class NativeRootCardModelMapper {
                     "Proc view pids",
                     "Manager package",
                     "Manager traits",
+                    "Throne hunt",
+                    "Throne hunt counters",
                     "Cgroup paths",
                     "Cgroup visible",
                     "Cgroup proc",
@@ -620,21 +629,42 @@ class NativeRootCardModelMapper {
                     },
                 ),
                 NativeRootDetailRowModel(
-                    "Throne hunt",
-                    when {
-                        report.ksuThroneHuntHitCount > 0 -> "${report.ksuThroneHuntHitCount} hit(s)"
+                    label = "Throne hunt",
+                    value = when {
+                        report.ksuThroneHuntHitCount > 0 ->
+                            "open=${report.ksuThroneHuntOpenCount} access=${report.ksuThroneHuntAccessCount}"
                         report.ksuThroneHuntWatchDenied -> "Watch denied"
-                        report.ksuThroneHuntAvailable && report.ksuThroneHuntStimulusApplied -> "Clean"
-                        report.ksuThroneHuntAvailable -> "Stimulus unavailable"
-                        else -> "N/A"
+                        !report.ksuThroneHuntStimulusApplied -> report.ksuThroneHuntFailureStage
+                        report.ksuThroneHuntAvailable -> "Clean"
+                        else -> report.ksuThroneHuntFailureStage
                     },
-                    when {
+                    status = when {
                         report.ksuThroneHuntHitCount > 0 -> DetectorStatus.danger()
                         report.ksuThroneHuntWatchDenied -> DetectorStatus.info(InfoKind.SUPPORT)
                         report.ksuThroneHuntAvailable && report.ksuThroneHuntStimulusApplied -> DetectorStatus.allClear()
                         report.ksuThroneHuntAvailable -> DetectorStatus.info(InfoKind.SUPPORT)
                         else -> DetectorStatus.info(InfoKind.SUPPORT)
                     },
+                    detail = "Collection ${report.ksuThroneHuntCollectionOutcome}; " +
+                        "baseline=${report.ksuThroneHuntBaselineHitCount}",
+                    hiddenCopyText = buildThroneHuntDiagnostics(report),
+                ),
+                NativeRootDetailRowModel(
+                    label = "Throne hunt counters",
+                    value = "open=${report.ksuThroneHuntOpenCount} " +
+                        "access=${report.ksuThroneHuntAccessCount} " +
+                        "raw=${report.ksuThroneHuntRawEventCount} " +
+                        "invalid=${report.ksuThroneHuntInvalidEventCount} " +
+                        "baseline=${report.ksuThroneHuntBaselineHitCount}",
+                    status = when {
+                        report.ksuThroneHuntHitCount > 0 -> DetectorStatus.danger()
+                        report.ksuThroneHuntStimulusApplied && report.ksuThroneHuntAvailable ->
+                            DetectorStatus.allClear()
+                        else -> DetectorStatus.info(InfoKind.SUPPORT)
+                    },
+                    detail = "Watch fd=${report.ksuThroneHuntWatchDescriptor}; " +
+                        "stage=${report.ksuThroneHuntFailureStage}",
+                    hiddenCopyText = buildThroneHuntDiagnostics(report),
                 ),
                 NativeRootDetailRowModel(
                     "Cgroup paths",
@@ -849,5 +879,33 @@ class NativeRootCardModelMapper {
                 !ksuThroneHuntStimulusApplied ||
                 ksuManagerVisibilityRestricted ||
                 ksuManagerVisibilityUnknown
+    }
+
+    private fun buildThroneHuntDiagnostics(report: NativeRootReport): String {
+        // The copy payload prefers the primary summary over string placeholders because the same
+        // text must remain useful when the visible row is later redesigned.
+        // 复制载荷优先使用主 evidence 字段而不是占位字符串；即使可见行以后重新设计，
+        // 这份文本仍然有用。
+        return buildString {
+            appendLine("NativeRoot ksuThroneHunt diagnostic")
+            appendLine("available=${report.ksuThroneHuntAvailable}")
+            appendLine("collectionOutcome=${report.ksuThroneHuntCollectionOutcome}")
+            appendLine("collectionDetail=${report.ksuThroneHuntCollectionDetail}")
+            appendLine("failureStage=${report.ksuThroneHuntFailureStage}")
+            appendLine("stimulusApplied=${report.ksuThroneHuntStimulusApplied}")
+            appendLine("stimulus=${report.ksuThroneHuntStimulusDetail}")
+            appendLine("packageDirectory=${report.ksuThroneHuntPackageDirectory}")
+            appendLine("watchDescriptor=${report.ksuThroneHuntWatchDescriptor}")
+            appendLine("watchDenied=${report.ksuThroneHuntWatchDenied}")
+            appendLine("open=${report.ksuThroneHuntOpenCount}")
+            appendLine("access=${report.ksuThroneHuntAccessCount}")
+            appendLine("raw=${report.ksuThroneHuntRawEventCount}")
+            appendLine("invalid=${report.ksuThroneHuntInvalidEventCount}")
+            appendLine("baseline=${report.ksuThroneHuntBaselineHitCount}")
+            if (report.ksuThroneHuntDiagnosticDetail.isNotBlank()) {
+                appendLine("--- detail ---")
+                append(report.ksuThroneHuntDiagnosticDetail)
+            }
+        }
     }
 }

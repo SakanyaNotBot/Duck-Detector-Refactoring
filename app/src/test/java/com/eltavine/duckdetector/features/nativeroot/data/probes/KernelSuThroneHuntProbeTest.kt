@@ -76,6 +76,33 @@ class KernelSuThroneHuntProbeTest {
     }
 
     @Test
+    fun `unavailable round preserves diagnostic counters for later review`() {
+        val result = KernelSuThroneHuntProbe().run(
+            KernelSuThroneHuntRoundResult(
+                available = false,
+                failureStage = "STIMULUS_FAILED",
+                stimulusApplied = false,
+                packageDirectory = "/data/app/package",
+                watchDescriptor = 12,
+                directoryOpenCount = 0,
+                directoryAccessCount = 0,
+                rawEventCount = 5,
+                invalidEventCount = 1,
+                baselineHitCount = 2,
+                stimulusDetail = "setMimeGroup failed: binder unavailable",
+                detail = "round detail",
+            )
+        )
+
+        assertEquals("STIMULUS_FAILED", result.failureStage)
+        assertEquals(5, result.rawEventCount)
+        assertEquals(1, result.invalidEventCount)
+        assertEquals(2, result.baselineHitCount)
+        assertEquals(12, result.watchDescriptor)
+        assertTrue(result.stimulusDetail.contains("binder unavailable"))
+    }
+
+    @Test
     fun `watch denial is reported without a hit`() {
         val result = KernelSuThroneHuntProbe().run(
             KernelSuThroneHuntRoundResult(

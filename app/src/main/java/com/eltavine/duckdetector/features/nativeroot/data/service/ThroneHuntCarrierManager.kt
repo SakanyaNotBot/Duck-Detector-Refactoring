@@ -22,6 +22,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
@@ -72,7 +74,17 @@ open class ThroneHuntCarrierManager(
     }
 
     private fun carrierFailureState(reason: String): ThroneHuntCarrierState {
-        return ThroneHuntCarrierState(failureReason = reason)
+        // A bind/timeout/IPC failure is support evidence, not a collected carrier result. Marking
+        // it BRIDGE_FAILED prevents the round from reading the empty carrier as a clean zero.
+        // bind/超时/IPC 失败是支持性证据，不是已采集的 carrier 结果；标记为
+        // BRIDGE_FAILED，避免 round 把空 carrier 读成 clean zero。
+        return ThroneHuntCarrierState(
+            collection = NativeCollectionStatus.failed(
+                NativeCollectionOutcome.BRIDGE_FAILED,
+                IllegalStateException(reason),
+            ),
+            failureReason = reason,
+        )
     }
 
     private suspend fun <T> performRemoteCall(

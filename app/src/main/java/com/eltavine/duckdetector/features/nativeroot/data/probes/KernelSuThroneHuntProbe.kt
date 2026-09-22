@@ -16,18 +16,25 @@
 
 package com.eltavine.duckdetector.features.nativeroot.data.probes
 
-import com.eltavine.duckdetector.features.nativeroot.data.native.ThroneHuntWatchNativeBridge
+import com.eltavine.duckdetector.core.native.NativeCollectionStatus
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootFinding
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootFindingSeverity
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootGroup
 
 data class KernelSuThroneHuntProbeResult(
     val available: Boolean,
+    val collection: NativeCollectionStatus = NativeCollectionStatus.Collected,
+    val failureStage: String = "READY",
     val watchInstalled: Boolean,
     val watchDenied: Boolean,
     val packageDirectory: String,
+    val watchDescriptor: Int,
     val directoryOpenCount: Int,
     val directoryAccessCount: Int,
+    val rawEventCount: Int,
+    val invalidEventCount: Int,
+    val baselineHitCount: Int,
+    val stimulusDetail: String,
     val findings: List<NativeRootFinding>,
     val detail: String,
 ) {
@@ -47,26 +54,23 @@ class KernelSuThroneHuntProbe {
 
     fun run(round: KernelSuThroneHuntRoundResult): KernelSuThroneHuntProbeResult {
         if (!round.available) {
+            // Preserve every diagnostic even when the verdict is unavailable. Collapsing counters
+            // to zero here would hide exactly the layer that failed on a device.
+            // 即使结论 unavailable 也保留所有诊断；把计数清零会隐藏设备上真正失败的层。
             return KernelSuThroneHuntProbeResult(
                 available = false,
-                watchInstalled = false,
+                collection = round.collection,
+                failureStage = round.failureStage,
+                watchInstalled = round.failureStage == "STIMULUS_FAILED",
                 watchDenied = round.watchDenied,
                 packageDirectory = round.packageDirectory,
-                directoryOpenCount = 0,
-                directoryAccessCount = 0,
-                findings = emptyList(),
-                detail = round.detail,
-            )
-        }
-
-        if (!round.stimulusApplied) {
-            return KernelSuThroneHuntProbeResult(
-                available = true,
-                watchInstalled = true,
-                watchDenied = round.watchDenied,
-                packageDirectory = round.packageDirectory,
-                directoryOpenCount = 0,
-                directoryAccessCount = 0,
+                watchDescriptor = round.watchDescriptor,
+                directoryOpenCount = round.directoryOpenCount,
+                directoryAccessCount = round.directoryAccessCount,
+                rawEventCount = round.rawEventCount,
+                invalidEventCount = round.invalidEventCount,
+                baselineHitCount = round.baselineHitCount,
+                stimulusDetail = round.stimulusDetail,
                 findings = emptyList(),
                 detail = round.detail,
             )
@@ -75,21 +79,36 @@ class KernelSuThroneHuntProbe {
         val detail = buildString {
             append("packageDir=")
             append(round.packageDirectory)
+            append("\nwatchDescriptor=")
+            append(round.watchDescriptor)
             append("\ndirectoryOpen=")
             append(round.directoryOpenCount)
             append("\ndirectoryAccess=")
             append(round.directoryAccessCount)
+            append("\nrawEvents=")
+            append(round.rawEventCount)
+            append("\ninvalidEvents=")
+            append(round.invalidEventCount)
+            append("\nbaselineHits=")
+            append(round.baselineHitCount)
             append('\n')
             append(round.detail)
         }
 
         return KernelSuThroneHuntProbeResult(
             available = true,
+            collection = round.collection,
+            failureStage = round.failureStage,
             watchInstalled = true,
             watchDenied = round.watchDenied,
             packageDirectory = round.packageDirectory,
+            watchDescriptor = round.watchDescriptor,
             directoryOpenCount = round.directoryOpenCount,
             directoryAccessCount = round.directoryAccessCount,
+            rawEventCount = round.rawEventCount,
+            invalidEventCount = round.invalidEventCount,
+            baselineHitCount = round.baselineHitCount,
+            stimulusDetail = round.stimulusDetail,
             findings = buildFindings(
                 round.directoryOpenCount,
                 round.directoryAccessCount,

@@ -30,6 +30,8 @@ data class ThroneHuntCarrierState(
     val notes: List<String> = emptyList(),
     val directoryOpenCount: Int = 0,
     val directoryAccessCount: Int = 0,
+    val rawEventCount: Int = 0,
+    val invalidEventCount: Int = 0,
 ) {
     // A denied watch never counts as coverage: the carrier reports it as a failure reason whose
     // text carries "denied", and the round must surface that instead of a clean zero.
@@ -74,6 +76,12 @@ object ThroneHuntCarrierPayloadCodec {
             append("EVENT_DIRECTORY_ACCESS=")
             append(state.directoryAccessCount)
             append('\n')
+            append("EVENT_RAW=")
+            append(state.rawEventCount)
+            append('\n')
+            append("EVENT_INVALID=")
+            append(state.invalidEventCount)
+            append('\n')
             state.notes.forEach { note ->
                 append("NOTE=")
                 append(NativePayloadCodec.encodeValue(note))
@@ -100,6 +108,8 @@ object ThroneHuntCarrierPayloadCodec {
                 "WATCH_INSTALLED",
                 "WATCH_DESCRIPTOR",
                 "WATCH_PACKAGE_DIR",
+                "EVENT_RAW",
+                "EVENT_INVALID",
                 "EVENT_DIRECTORY_OPEN",
                 "EVENT_DIRECTORY_ACCESS",
             )
@@ -163,6 +173,14 @@ object ThroneHuntCarrierPayloadCodec {
 
                             "EVENT_DIRECTORY_ACCESS" -> state.copy(
                                 directoryAccessCount = value.toIntOrNull() ?: state.directoryAccessCount,
+                            )
+
+                            "EVENT_RAW" -> state.copy(
+                                rawEventCount = value.toIntOrNull() ?: state.rawEventCount,
+                            )
+
+                            "EVENT_INVALID" -> state.copy(
+                                invalidEventCount = value.toIntOrNull() ?: state.invalidEventCount,
                             )
 
                             else -> state

@@ -169,6 +169,15 @@ class NativeRootRepository(
             ksuThroneHuntOpenCount = throneHuntResult.directoryOpenCount,
             ksuThroneHuntAccessCount = throneHuntResult.directoryAccessCount,
             ksuThroneHuntStimulusApplied = throneHuntRoundResult.stimulusApplied,
+            ksuThroneHuntCollectionOutcome = throneHuntResult.collection.outcome.name,
+            ksuThroneHuntCollectionDetail = throneHuntResult.collection.detail,
+            ksuThroneHuntFailureStage = throneHuntResult.failureStage,
+            ksuThroneHuntBaselineHitCount = throneHuntResult.baselineHitCount,
+            ksuThroneHuntRawEventCount = throneHuntResult.rawEventCount,
+            ksuThroneHuntInvalidEventCount = throneHuntResult.invalidEventCount,
+            ksuThroneHuntWatchDescriptor = throneHuntResult.watchDescriptor,
+            ksuThroneHuntStimulusDetail = throneHuntResult.stimulusDetail,
+            ksuThroneHuntDiagnosticDetail = throneHuntResult.detail,
         )
     }
 
@@ -436,7 +445,7 @@ class NativeRootRepository(
                 label = "ksuThroneHunt",
                 summary = when {
                     throneHuntResult.hitCount > 0 -> "${throneHuntResult.hitCount} hit(s)"
-                    !throneHuntResult.available -> "Unavailable"
+                    !throneHuntResult.available -> throneHuntResult.failureStage
                     throneHuntResult.watchDenied -> "Watch denied"
                     else -> "Clean"
                 },
@@ -452,6 +461,23 @@ class NativeRootRepository(
                     append("KernelSU's pkg_observer reacts to the packages.list rewrite by running ")
                     append("track_throne -> search_manager(\"/data/app\", 2), which opens and iterates our package ")
                     append("directory inode; that traversal is what the inherited watch reports.\n")
+                    append("collection=")
+                    append(throneHuntResult.collection.outcome.name)
+                    append("\nfailureStage=")
+                    append(throneHuntResult.failureStage)
+                    append("\nopen=")
+                    append(throneHuntResult.directoryOpenCount)
+                    append(" access=")
+                    append(throneHuntResult.directoryAccessCount)
+                    append(" raw=")
+                    append(throneHuntResult.rawEventCount)
+                    append(" invalid=")
+                    append(throneHuntResult.invalidEventCount)
+                    append(" baseline=")
+                    append(throneHuntResult.baselineHitCount)
+                    append("\nstimulus=")
+                    append(throneHuntResult.stimulusDetail)
+                    append('\n')
                     if (throneHuntResult.detail.isNotBlank()) {
                         append(throneHuntResult.detail)
                     }

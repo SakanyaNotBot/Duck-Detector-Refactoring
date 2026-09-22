@@ -132,6 +132,15 @@ data class NativeRootReport(
     val ksuThroneHuntOpenCount: Int = 0,
     val ksuThroneHuntAccessCount: Int = 0,
     val ksuThroneHuntStimulusApplied: Boolean = false,
+    val ksuThroneHuntCollectionOutcome: String = "COLLECTED",
+    val ksuThroneHuntCollectionDetail: String = "",
+    val ksuThroneHuntFailureStage: String = "READY",
+    val ksuThroneHuntBaselineHitCount: Int = 0,
+    val ksuThroneHuntRawEventCount: Int = 0,
+    val ksuThroneHuntInvalidEventCount: Int = 0,
+    val ksuThroneHuntWatchDescriptor: Int = -1,
+    val ksuThroneHuntStimulusDetail: String = "",
+    val ksuThroneHuntDiagnosticDetail: String = "",
 ) {
     val directFindings: List<NativeRootFinding>
         get() = findings.filter { it.group == NativeRootGroup.SYSCALL || it.group == NativeRootGroup.SIDE_CHANNEL }

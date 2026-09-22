@@ -23,6 +23,7 @@ import android.os.IBinder
 import android.os.Parcel
 import com.eltavine.duckdetector.core.native.NativeCollectionOutcome
 import com.eltavine.duckdetector.core.native.NativeCollectionStatus
+import com.eltavine.duckdetector.core.native.NativePayloadCodec
 import com.eltavine.duckdetector.features.nativeroot.data.native.ThroneHuntWatchNativeBridge
 
 class ThroneHuntCarrierService : Service() {
@@ -110,8 +111,11 @@ class ThroneHuntCarrierService : Service() {
                 append("EVENT_RAW=")
                 append(events.rawEventCount)
                 append('\n')
+                append("EVENT_INVALID=")
+                append(events.invalidCount)
+                append('\n')
                 append("EVENT_DETAIL=")
-                append(events.detail)
+                append(NativePayloadCodec.encodeValue(events.detail))
                 append('\n')
             }
         }.getOrElse { throwable ->
